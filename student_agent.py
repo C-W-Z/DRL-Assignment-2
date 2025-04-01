@@ -404,7 +404,7 @@ patterns = [
 
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
-with open("Q1_2048_approximator_weights_30000.pkl", "rb") as f:
+with open("Q1_2048_approximator_weights_60000.pkl", "rb") as f:
     approximator.weights = pickle.load(f)
 
 # UCT Node for MCTS
@@ -431,7 +431,6 @@ class UCTNode:
     def fully_expanded(self):
 		# A node is fully expanded if no legal actions remain untried.
         return len(self.untried_actions) == 0
-
 
 # Note: This MCTS implementation is almost identical to the previous one,
 # except for the rollout phase, which now incorporates the approximator.
@@ -582,3 +581,20 @@ def get_action(state, score):
             best_action = action
 
     return best_action
+
+if __name__ == "__main__":
+    env = Game2048Env()
+    state = env.reset()
+    # env.render()
+
+    done = False
+    while not done:
+        best_act = get_action(state, env.score)
+        print(f"TD-MCTS selected action: {best_act}, Score: {env.score}")
+
+        # Execute the selected action and update the state
+        state, reward, done, _ = env.step(best_act)
+        if done:
+            env.render(action=best_act)
+
+    print("Game over, final score:", env.score)
