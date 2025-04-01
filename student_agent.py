@@ -243,8 +243,6 @@ class Game2048Env(gym.Env):
         # If the simulated board is different from the current board, the move is legal
         return not np.array_equal(self.board, temp_board)
 
-env = Game2048Env()
-
 def rot90(coords):
     return [(3 - y, x) for (x, y) in coords]
 
@@ -425,6 +423,9 @@ class UCTNode:
         self.children = {}
         self.visits = 0
         self.total_reward = 0.0
+        env = Game2048Env()
+        env.board = state
+        env.score = score
         self.untried_actions = [a for a in range(4) if env.is_move_legal(a)]
 
     def fully_expanded(self):
@@ -451,6 +452,9 @@ class TD_MCTS_Node:
         self.children = {}
         self.visits = 0
         self.total_reward = 0.0
+        env = Game2048Env()
+        env.board = state
+        env.score = score
         # List of untried actions based on the current state's legal moves
         self.untried_actions = [a for a in range(4) if env.is_move_legal(a)]
 
@@ -545,7 +549,7 @@ class TD_MCTS:
         return best_action, distribution
 
 
-td_mcts = TD_MCTS(env, approximator, iterations=50, exploration_constant=1.41, rollout_depth=10, gamma=0.99)
+td_mcts = TD_MCTS(Game2048Env(), approximator, iterations=50, exploration_constant=1.41, rollout_depth=10, gamma=0.99)
 
 def get_action(state, score):
 
