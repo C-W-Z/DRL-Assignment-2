@@ -8,7 +8,19 @@ import matplotlib.pyplot as plt
 import copy
 import random
 import math
+from collections import defaultdict
 
+COLOR_MAP = {
+    0: "#cdc1b4", 2: "#eee4da", 4: "#ede0c8", 8: "#f2b179",
+    16: "#f59563", 32: "#f67c5f", 64: "#f65e3b", 128: "#edcf72",
+    256: "#edcc61", 512: "#edc850", 1024: "#edc53f", 2048: "#edc22e",
+    4096: "#3c3a32", 8192: "#3c3a32", 16384: "#3c3a32", 32768: "#3c3a32"
+}
+TEXT_COLOR = {
+    2: "#776e65", 4: "#776e65", 8: "#f9f6f2", 16: "#f9f6f2",
+    32: "#f9f6f2", 64: "#f9f6f2", 128: "#f9f6f2", 256: "#f9f6f2",
+    512: "#f9f6f2", 1024: "#f9f6f2", 2048: "#f9f6f2", 4096: "#f9f6f2"
+}
 
 class Game2048Env(gym.Env):
     def __init__(self):
@@ -231,10 +243,191 @@ class Game2048Env(gym.Env):
         # If the simulated board is different from the current board, the move is legal
         return not np.array_equal(self.board, temp_board)
 
+
+def rot90(coords):
+    return [(3 - y, x) for (x, y) in coords]
+
+def rot180(coords):
+    return [(3 - x, 3 - y) for (x, y) in coords]
+
+def rot270(coords):
+    return [(y, 3 - x) for (x, y) in coords]
+
+def reflect_h(coords):
+    return [(x, 3 - y) for (x, y) in coords]
+
+
+class NTupleApproximator:
+    def __init__(self, board_size, patterns):
+        """
+        Initializes the N-Tuple approximator.
+        Hint: you can adjust these if you want
+        """
+        self.board_size = board_size
+        self.patterns = patterns
+        # Create a weight dictionary for each pattern (shared within a pattern group)
+        self.weights = [defaultdict(float) for _ in patterns]
+        # Generate symmetrical transformations for each pattern
+        self.symmetry_patterns = []
+        for pattern in self.patterns:
+            syms = self.generate_symmetries(pattern)
+            for syms_ in syms:
+                self.symmetry_patterns.append(syms_)
+
+    def generate_symmetries(self, pattern):
+        # TODO: Generate 8 symmetrical transformations of the given pattern.
+        symmetries = [
+            pattern,
+            rot90(pattern),
+            rot180(pattern),
+            rot270(pattern),
+            reflect_h(pattern),
+            rot90(reflect_h(pattern)),
+            rot180(reflect_h(pattern)),
+            rot270(reflect_h(pattern))
+        ]
+        return symmetries
+
+    def tile_to_index(self, tile):
+        """
+        Converts tile values to an index for the lookup table.
+        """
+        if tile == 0:
+            return 0
+        else:
+            return int(math.log(tile, 2))
+
+    def get_feature(self, board, coords):
+        # TODO: Extract tile values from the board based on the given coordinates and convert them into a feature tuple.
+        return tuple(self.tile_to_index(board[r, c]) for r, c in coords)
+
+    def value(self, board):
+        # TODO: Estimate the board value: sum the evaluations from all patterns.
+        total_value = 0
+        for i, pattern in enumerate(self.symmetry_patterns):
+            feature = self.get_feature(board, pattern)
+            weight_idx = i // 8  # 每個原始 pattern 對應 8 個對稱版本
+            total_value += self.weights[weight_idx][feature]
+        return total_value
+
+    def update(self, board, delta, alpha):
+        # TODO: Update weights based on the TD error.
+        for i, pattern in enumerate(self.symmetry_patterns):
+            feature = self.get_feature(board, pattern)
+            weight_idx = i // 8
+            self.weights[weight_idx][feature] += alpha * delta
+
+def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=0.01, gamma=0.99, epsilon=0.1):
+    """
+    Trains the 2048 agent using TD-Learning.
+
+    Args:
+        env: The 2048 game environment.
+        approximator: NTupleApproximator instance.
+        num_episodes: Number of training episodes.
+        alpha: Learning rate.
+        gamma: Discount factor.
+        epsilon: Epsilon-greedy exploration rate.
+    """
+    final_scores = []
+    success_flags = []
+
+    for episode in range(num_episodes):
+        state = env.reset()
+        trajectory = []  # Store trajectory data if needed
+        previous_score = 0
+        done = False
+        max_tile = np.max(state)
+
+        while not done:
+            legal_moves = [a for a in range(4) if env.is_move_legal(a)]
+            if not legal_moves:
+                break
+            # TODO: action selection
+            # Note: TD learning works fine on 2048 without explicit exploration, but you can still try some exploration methods.
+            if random.random() < epsilon:
+                action = random.choice(legal_moves)
+            else:
+                values = []
+                for a in legal_moves:
+                    temp_env = Game2048Env()
+                    temp_env.board = env.board.copy()
+                    temp_env.score = env.score
+                    next_state, _, _, _ = temp_env.step(a)
+                    values.append(approximator.value(next_state))
+                action = legal_moves[np.argmax(values)]
+
+            next_state, new_score, done, _ = env.step(action)
+            incremental_reward = new_score - previous_score
+            previous_score = new_score
+            max_tile = max(max_tile, np.max(next_state))
+
+            # TODO: Store trajectory or just update depending on the implementation
+            # trajectory.append((state, action, incremental_reward, next_state, done))
+
+            current_value = approximator.value(state)
+            next_value = approximator.value(next_state) if not done else 0
+            td_error = incremental_reward + gamma * next_value - current_value
+            approximator.update(state, td_error, alpha)
+
+            state = next_state
+
+        # TODO: If you are storing the trajectory, consider updating it now depending on your implementation.
+        # for state, action, reward, next_state, done in reversed(trajectory):
+        #     if done:
+        #         delta = reward - approximator.value(state)
+        #     else:
+        #         delta = reward + gamma * approximator.value(next_state) - approximator.value(state)
+        #     approximator.update(state, delta, alpha)
+
+        final_scores.append(env.score)
+        success_flags.append(1 if max_tile >= 2048 else 0)
+
+        if (episode + 1) % 100 == 0:
+            avg_score = np.mean(final_scores[-100:])
+            success_rate = np.sum(success_flags[-100:]) / 100
+            print(f"Episode {previous_episodes+episode+1}/{previous_episodes+num_episodes} | Avg Score: {avg_score:.2f} | Success Rate: {success_rate:.2f} | epsilon: {epsilon}")
+
+            epsilon *= 0.99
+
+        if (episode + 1) % 5000 == 0:
+            with open(f"Q1_2048_approximator_weights_{previous_episodes+episode+1}.pkl", "wb") as f:
+                pickle.dump(approximator.weights, f)
+
+    return final_scores
+
+# TODO: Define your own n-tuple patterns
+patterns = [
+    [(0, 0), (0, 1), (0, 2), (0, 3)],
+    [(1, 0), (1, 1), (1, 2), (1, 3)],
+    [(0, 0), (0, 1), (1, 0), (1, 1)],
+]
+
+approximator = NTupleApproximator(board_size=4, patterns=patterns)
+
+with open("Q1_2048_approximator_weights_20000.pkl", "rb") as f:
+    approximator.weights = pickle.load(f)
+
 def get_action(state, score):
     env = Game2048Env()
-    return random.choice([0, 1, 2, 3]) # Choose a random action
-    
-    # You can submit this random agent to evaluate the performance of a purely random strategy.
+    env.board = state
+    env.score = score
 
+    legal_moves = [a for a in range(4) if env.is_move_legal(a)]
+    if not legal_moves:
+        return 0
 
+    # TODO: Use your N-Tuple approximator to play 2048
+    best_action = None
+    best_value = -float('inf')
+
+    for action in legal_moves:
+        copy_env = copy.deepcopy(env)
+        next_state, _, _, _ = copy_env.step(action)
+        value = approximator.value(next_state)
+
+        if value > best_value:
+            best_value = value
+            best_action = action
+
+    return best_action
