@@ -109,7 +109,7 @@ class Connect6Game:
         empty_positions = [(r, c) for r in range(self.size) for c in range(self.size) if self.board[r, c] == 0]
         selected = random.sample(empty_positions, 1)
         move_str = ",".join(f"{self.index_to_label(c)}{r+1}" for r, c in selected)
-        
+
         self.play_move(color, move_str)
 
         print(f"{move_str}\n\n", end='', flush=True)
@@ -127,7 +127,7 @@ class Connect6Game:
 
     def list_commands(self):
         """Lists all available commands."""
-        print("= ", flush=True)  
+        print("= ", flush=True)
 
     def process_command(self, command):
         """Parses and executes GTP commands."""
@@ -137,7 +137,7 @@ class Connect6Game:
 
         if not command:
             return
-        
+
         parts = command.split()
         cmd = parts[0].lower()
 

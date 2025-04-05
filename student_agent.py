@@ -548,7 +548,7 @@ class TD_MCTS:
         return best_action, distribution
 
 
-td_mcts = TD_MCTS(Game2048Env(), approximator, iterations=50, exploration_constant=1.41, rollout_depth=10, gamma=0.99)
+td_mcts = TD_MCTS(Game2048Env(), approximator, iterations=100, exploration_constant=math.sqrt(2), rollout_depth=20, gamma=0.99)
 
 def get_action(state, score):
 
