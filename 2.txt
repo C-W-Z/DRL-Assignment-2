@@ -1,50 +1,20 @@
-Episode 100/5000 | Avg Score: 2202.68 | Success Rate: 0.00 | epsilon: 0
-Episode 200/5000 | Avg Score: 3544.80 | Success Rate: 0.00 | epsilon: 0.0
-Episode 300/5000 | Avg Score: 4289.24 | Success Rate: 0.00 | epsilon: 0.0
-Episode 400/5000 | Avg Score: 4305.68 | Success Rate: 0.00 | epsilon: 0.0
-Episode 500/5000 | Avg Score: 4514.96 | Success Rate: 0.00 | epsilon: 0.0
-Episode 600/5000 | Avg Score: 4593.28 | Success Rate: 0.00 | epsilon: 0.0
-Episode 700/5000 | Avg Score: 4682.32 | Success Rate: 0.00 | epsilon: 0.0
-Episode 800/5000 | Avg Score: 4357.40 | Success Rate: 0.00 | epsilon: 0.0
-Episode 900/5000 | Avg Score: 4972.64 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1000/5000 | Avg Score: 5123.28 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1100/5000 | Avg Score: 5592.28 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1200/5000 | Avg Score: 5282.12 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1300/5000 | Avg Score: 5270.84 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1400/5000 | Avg Score: 5446.64 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1500/5000 | Avg Score: 5818.72 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1600/5000 | Avg Score: 6078.40 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1700/5000 | Avg Score: 5562.24 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1800/5000 | Avg Score: 6373.16 | Success Rate: 0.00 | epsilon: 0.0
-Episode 1900/5000 | Avg Score: 6528.64 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2000/5000 | Avg Score: 6659.92 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2100/5000 | Avg Score: 6474.04 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2200/5000 | Avg Score: 6400.08 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2300/5000 | Avg Score: 6396.52 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2400/5000 | Avg Score: 6390.48 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2500/5000 | Avg Score: 6074.64 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2600/5000 | Avg Score: 6185.36 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2700/5000 | Avg Score: 5941.48 | Success Rate: 0.00 | epsilon: 0.0
-Episode 2800/5000 | Avg Score: 6982.56 | Success Rate: 0.01 | epsilon: 0.0
-Episode 2900/5000 | Avg Score: 6591.60 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3000/5000 | Avg Score: 6790.84 | Success Rate: 0.01 | epsilon: 0.0
-Episode 3100/5000 | Avg Score: 6262.00 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3200/5000 | Avg Score: 7145.48 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3300/5000 | Avg Score: 6528.04 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3400/5000 | Avg Score: 7247.28 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3500/5000 | Avg Score: 6573.44 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3600/5000 | Avg Score: 6563.08 | Success Rate: 0.02 | epsilon: 0.0
-Episode 3700/5000 | Avg Score: 7023.52 | Success Rate: 0.01 | epsilon: 0.0
-Episode 3800/5000 | Avg Score: 6660.24 | Success Rate: 0.00 | epsilon: 0.0
-Episode 3900/5000 | Avg Score: 7365.64 | Success Rate: 0.01 | epsilon: 0.0
-Episode 4000/5000 | Avg Score: 7452.48 | Success Rate: 0.01 | epsilon: 0.0
-Episode 4100/5000 | Avg Score: 7196.08 | Success Rate: 0.01 | epsilon: 0.0
-Episode 4200/5000 | Avg Score: 7090.04 | Success Rate: 0.01 | epsilon: 0.0
-Episode 4300/5000 | Avg Score: 7160.28 | Success Rate: 0.00 | epsilon: 0.0
-Episode 4400/5000 | Avg Score: 7575.00 | Success Rate: 0.00 | epsilon: 0.0
-Episode 4500/5000 | Avg Score: 7412.56 | Success Rate: 0.00 | epsilon: 0.0
-Episode 4600/5000 | Avg Score: 6874.60 | Success Rate: 0.00 | epsilon: 0.0
-Episode 4700/5000 | Avg Score: 7720.56 | Success Rate: 0.01 | epsilon: 0.0
-Episode 4800/5000 | Avg Score: 7287.88 | Success Rate: 0.01 | epsilon: 0.0
-Episode 4900/5000 | Avg Score: 7279.92 | Success Rate: 0.00 | epsilon: 0.0
-Episode 5000/5000 | Avg Score: 8262.60 | Success Rate: 0.01 | epsilon: 0.0
+Episode 100/1000 | Avg Score: 4453.96 | Success Rate: 0.00
+Episode 200/1000 | Avg Score: 6924.44 | Success Rate: 0.01
+Episode 300/1000 | Avg Score: 7827.52 | Success Rate: 0.00
+Episode 400/1000 | Avg Score: 10016.48 | Success Rate: 0.00
+Episode 500/1000 | Avg Score: 10942.00 | Success Rate: 0.02
+Episode 600/1000 | Avg Score: 10776.64 | Success Rate: 0.03
+Episode 700/1000 | Avg Score: 10976.56 | Success Rate: 0.03
+Episode 800/1000 | Avg Score: 11161.24 | Success Rate: 0.01
+Episode 900/1000 | Avg Score: 10686.96 | Success Rate: 0.01
+Episode 1000/1000 | Avg Score: 11445.76 | Success Rate: 0.04
+Episode 1100/3000 | Avg Score: 12181.92 | Success Rate: 0.03
+Episode 1200/3000 | Avg Score: 12033.20 | Success Rate: 0.05
+Episode 1300/3000 | Avg Score: 12524.64 | Success Rate: 0.05
+Episode 1400/3000 | Avg Score: 12682.52 | Success Rate: 0.08
+Episode 1500/3000 | Avg Score: 12769.28 | Success Rate: 0.08
+Episode 1600/3000 | Avg Score: 12900.96 | Success Rate: 0.07
+Episode 1700/3000 | Avg Score: 12695.96 | Success Rate: 0.04
+Episode 1800/3000 | Avg Score: 13584.08 | Success Rate: 0.08
+Episode 1900/3000 | Avg Score: 13304.04 | Success Rate: 0.12
+Episode 2000/3000 | Avg Score: 13189.84 | Success Rate: 0.08

@@ -283,239 +283,28 @@ class Game2048EnvNoRandom(gym.Env):
         new_board, moved, _ = move_board(temp_board, action, self.score)
         return moved
 
-# class Game2048Env(gym.Env):
-#     def __init__(self):
-#         super(Game2048Env, self).__init__()
+import copy
+import random
+import math
+import numpy as np
+from collections import defaultdict
+import pickle
 
-#         self.size = 4  # 4x4 2048 board
-#         self.board = np.zeros((self.size, self.size), dtype=int)
-#         self.score = 0
+# -------------------------------
+# TODO: Define transformation functions (rotation and reflection), i.e., rot90, rot180, ..., etc.
+# -------------------------------
 
-#         # Action space: 0: up, 1: down, 2: left, 3: right
-#         self.action_space = spaces.Discrete(4)
-#         self.actions = ["up", "down", "left", "right"]
+def rot90(pattern, board_size):
+    return [(j, board_size - 1 - i) for (i, j) in pattern]
 
-#         self.last_move_valid = True  # Record if the last move was valid
+def rot180(pattern, board_size):
+    return [(board_size - 1 - i, board_size - 1 - j) for (i, j) in pattern]
 
-#         self.reset()
+def rot270(pattern, board_size):
+    return [(board_size - 1 - j, i) for (i, j) in pattern]
 
-#     def reset(self):
-#         """Reset the environment"""
-#         self.board = np.zeros((self.size, self.size), dtype=int)
-#         self.score = 0
-#         self.add_random_tile()
-#         self.add_random_tile()
-#         return self.board
-
-#     def add_random_tile(self):
-#         """Add a random tile (2 or 4) to an empty cell"""
-#         empty_cells = list(zip(*np.where(self.board == 0)))
-#         if empty_cells:
-#             x, y = random.choice(empty_cells)
-#             self.board[x, y] = 2 if random.random() < 0.9 else 4
-
-#     def compress(self, row):
-#         """Compress the row: move non-zero values to the left"""
-#         new_row = row[row != 0]  # Remove zeros
-#         new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')  # Pad with zeros on the right
-#         return new_row
-
-#     def merge(self, row):
-#         """Merge adjacent equal numbers in the row"""
-#         for i in range(len(row) - 1):
-#             if row[i] == row[i + 1] and row[i] != 0:
-#                 row[i] *= 2
-#                 row[i + 1] = 0
-#                 self.score += row[i]
-#         return row
-
-#     def move_left(self):
-#         """Move the board left"""
-#         moved = False
-#         for i in range(self.size):
-#             original_row = self.board[i].copy()
-#             new_row = self.compress(self.board[i])
-#             new_row = self.merge(new_row)
-#             new_row = self.compress(new_row)
-#             self.board[i] = new_row
-#             if not np.array_equal(original_row, self.board[i]):
-#                 moved = True
-#         return moved
-
-#     def move_right(self):
-#         """Move the board right"""
-#         moved = False
-#         for i in range(self.size):
-#             original_row = self.board[i].copy()
-#             # Reverse the row, compress, merge, compress, then reverse back
-#             reversed_row = self.board[i][::-1]
-#             reversed_row = self.compress(reversed_row)
-#             reversed_row = self.merge(reversed_row)
-#             reversed_row = self.compress(reversed_row)
-#             self.board[i] = reversed_row[::-1]
-#             if not np.array_equal(original_row, self.board[i]):
-#                 moved = True
-#         return moved
-
-#     def move_up(self):
-#         """Move the board up"""
-#         moved = False
-#         for j in range(self.size):
-#             original_col = self.board[:, j].copy()
-#             col = self.compress(self.board[:, j])
-#             col = self.merge(col)
-#             col = self.compress(col)
-#             self.board[:, j] = col
-#             if not np.array_equal(original_col, self.board[:, j]):
-#                 moved = True
-#         return moved
-
-#     def move_down(self):
-#         """Move the board down"""
-#         moved = False
-#         for j in range(self.size):
-#             original_col = self.board[:, j].copy()
-#             # Reverse the column, compress, merge, compress, then reverse back
-#             reversed_col = self.board[:, j][::-1]
-#             reversed_col = self.compress(reversed_col)
-#             reversed_col = self.merge(reversed_col)
-#             reversed_col = self.compress(reversed_col)
-#             self.board[:, j] = reversed_col[::-1]
-#             if not np.array_equal(original_col, self.board[:, j]):
-#                 moved = True
-#         return moved
-
-#     def is_game_over(self):
-#         """Check if there are no legal moves left"""
-#         # If there is any empty cell, the game is not over
-#         if np.any(self.board == 0):
-#             return False
-
-#         # Check horizontally
-#         for i in range(self.size):
-#             for j in range(self.size - 1):
-#                 if self.board[i, j] == self.board[i, j+1]:
-#                     return False
-
-#         # Check vertically
-#         for j in range(self.size):
-#             for i in range(self.size - 1):
-#                 if self.board[i, j] == self.board[i+1, j]:
-#                     return False
-
-#         return True
-
-#     def step(self, action):
-#         """Execute one action"""
-#         assert self.action_space.contains(action), "Invalid action"
-
-#         if action == 0:
-#             moved = self.move_up()
-#         elif action == 1:
-#             moved = self.move_down()
-#         elif action == 2:
-#             moved = self.move_left()
-#         elif action == 3:
-#             moved = self.move_right()
-#         else:
-#             moved = False
-
-#         self.last_move_valid = moved  # Record if the move was valid
-
-#         if moved:
-#             self.add_random_tile()
-
-#         done = self.is_game_over()
-
-#         return self.board, self.score, done, {}
-
-#     def render(self, mode="human", action=None):
-#         """
-#         Render the current board using Matplotlib.
-#         This function does not check if the action is valid and only displays the current board state.
-#         """
-#         fig, ax = plt.subplots(figsize=(4, 4))
-#         ax.set_xticks([])
-#         ax.set_yticks([])
-#         ax.set_xlim(-0.5, self.size - 0.5)
-#         ax.set_ylim(-0.5, self.size - 0.5)
-
-#         for i in range(self.size):
-#             for j in range(self.size):
-#                 value = self.board[i, j]
-#                 color = COLOR_MAP.get(value, "#3c3a32")  # Default dark color
-#                 text_color = TEXT_COLOR.get(value, "white")
-#                 rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor="black")
-#                 ax.add_patch(rect)
-
-#                 if value != 0:
-#                     ax.text(j, i, str(value), ha='center', va='center',
-#                             fontsize=16, fontweight='bold', color=text_color)
-#         title = f"score: {self.score}"
-#         if action is not None:
-#             title += f" | action: {self.actions[action]}"
-#         plt.title(title)
-#         plt.gca().invert_yaxis()
-#         plt.show()
-
-#     def simulate_row_move(self, row):
-#         """Simulate a left move for a single row"""
-#         # Compress: move non-zero numbers to the left
-#         new_row = row[row != 0]
-#         new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-#         # Merge: merge adjacent equal numbers (do not update score)
-#         for i in range(len(new_row) - 1):
-#             if new_row[i] == new_row[i + 1] and new_row[i] != 0:
-#                 new_row[i] *= 2
-#                 new_row[i + 1] = 0
-#         # Compress again
-#         new_row = new_row[new_row != 0]
-#         new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-#         return new_row
-
-#     def is_move_legal(self, action):
-#         """Check if the specified move is legal (i.e., changes the board)"""
-#         # Create a copy of the current board state
-#         temp_board = self.board.copy()
-
-#         if action == 0:  # Move up
-#             for j in range(self.size):
-#                 col = temp_board[:, j]
-#                 new_col = self.simulate_row_move(col)
-#                 temp_board[:, j] = new_col
-#         elif action == 1:  # Move down
-#             for j in range(self.size):
-#                 # Reverse the column, simulate, then reverse back
-#                 col = temp_board[:, j][::-1]
-#                 new_col = self.simulate_row_move(col)
-#                 temp_board[:, j] = new_col[::-1]
-#         elif action == 2:  # Move left
-#             for i in range(self.size):
-#                 row = temp_board[i]
-#                 temp_board[i] = self.simulate_row_move(row)
-#         elif action == 3:  # Move right
-#             for i in range(self.size):
-#                 row = temp_board[i][::-1]
-#                 new_row = self.simulate_row_move(row)
-#                 temp_board[i] = new_row[::-1]
-#         else:
-#             raise ValueError("Invalid action")
-
-#         # If the simulated board is different from the current board, the move is legal
-#         return not np.array_equal(self.board, temp_board)
-
-def rot90(coords):
-    return [(3 - y, x) for (x, y) in coords]
-
-def rot180(coords):
-    return [(3 - x, 3 - y) for (x, y) in coords]
-
-def rot270(coords):
-    return [(y, 3 - x) for (x, y) in coords]
-
-def reflect_h(coords):
-    return [(x, 3 - y) for (x, y) in coords]
-
+def reflect_h(pattern, board_size):
+    return [(i, board_size - 1 - j) for (i, j) in pattern]
 
 class NTupleApproximator:
     def __init__(self, board_size, patterns):
@@ -529,130 +318,147 @@ class NTupleApproximator:
         self.weights = [defaultdict(float) for _ in patterns]
         # Generate symmetrical transformations for each pattern
         self.symmetry_patterns = []
+        self.symmetry_groups = []
         for pattern in self.patterns:
             syms = self.generate_symmetries(pattern)
+            self.symmetry_groups.append(syms)
             for syms_ in syms:
                 self.symmetry_patterns.append(syms_)
 
+        self.tile_to_index_lookup = {0: 0}
+        max_tile = 2 ** 20
+        for i in range(1, 21):
+            self.tile_to_index_lookup[2 ** i] = i
+
     def generate_symmetries(self, pattern):
         # TODO: Generate 8 symmetrical transformations of the given pattern.
-        symmetries = [
+        board_size = self.board_size
+        r90 = rot90(pattern, board_size)
+        r180 = rot180(pattern, board_size)
+        r270 = rot270(pattern, board_size)
+        return [
             pattern,
-            rot90(pattern),
-            rot180(pattern),
-            rot270(pattern),
-            reflect_h(pattern),
-            rot90(reflect_h(pattern)),
-            rot180(reflect_h(pattern)),
-            rot270(reflect_h(pattern))
+            r90,
+            r180,
+            r270,
+            reflect_h(pattern, board_size),
+            reflect_h(r90, board_size),
+            reflect_h(r180, board_size),
+            reflect_h(r270, board_size)
         ]
-        return symmetries
 
     def tile_to_index(self, tile):
         """
         Converts tile values to an index for the lookup table.
         """
-        if tile == 0:
-            return 0
-        else:
-            return int(math.log(tile, 2))
+        # if tile == 0:
+        #     return 0
+        # else:
+        #     return int(math.log(tile, 2))
+        return self.tile_to_index_lookup[tile]
 
     def get_feature(self, board, coords):
         # TODO: Extract tile values from the board based on the given coordinates and convert them into a feature tuple.
-        return tuple(self.tile_to_index(board[r, c]) for r, c in coords)
+        return tuple(self.tile_to_index(board[i, j]) for (i, j) in coords)
 
     def value(self, board):
         # TODO: Estimate the board value: sum the evaluations from all patterns.
-        total_value = 0
-        for i, pattern in enumerate(self.symmetry_patterns):
-            feature = self.get_feature(board, pattern)
-            weight_idx = i // 8  # 每個原始 pattern 對應 8 個對稱版本
-            total_value += self.weights[weight_idx][feature]
+        total_value = 0.0
+        for i, syms in enumerate(self.symmetry_groups):
+            group_value = 0.0
+            for pattern in syms:
+                feature = self.get_feature(board, pattern)
+                group_value += self.weights[i][feature]
+            total_value += group_value / len(syms)
         return total_value
 
     def update(self, board, delta, alpha):
         # TODO: Update weights based on the TD error.
-        for i, pattern in enumerate(self.symmetry_patterns):
-            feature = self.get_feature(board, pattern)
-            weight_idx = i // 8
-            self.weights[weight_idx][feature] += alpha * delta
+        for i, syms in enumerate(self.symmetry_groups):
+            update_value = alpha * delta / len(syms)
+            for pattern in syms:
+                feature = self.get_feature(board, pattern)
+                self.weights[i][feature] += update_value
 
-def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=0.01, gamma=0.99, epsilon=0.1, epsilon_decay_rate=0.99):
+def td_learning(env, approximator, previous_episodes=0, num_episodes=50000, alpha=0.01, gamma=0.99):
     """
-    Trains the 2048 agent using TD-Learning.
-
-    Args:
-        env: The 2048 game environment.
-        approximator: NTupleApproximator instance.
-        num_episodes: Number of training episodes.
-        alpha: Learning rate.
-        gamma: Discount factor.
-        epsilon: Epsilon-greedy exploration rate.
+    Trains the 2048 agent using TD-Learning with afterstate updates.
     """
     final_scores = []
     success_flags = []
 
     for episode in range(num_episodes):
         state = env.reset()
-        previous_afterstate = state
-        trajectory = []  # Store trajectory data if needed
         previous_score = 0
         done = False
         max_tile = np.max(state)
-
-        # print(episode)
+        # previous_afterstate = state
+        # trajectory = []
 
         while not done:
             legal_moves = [a for a in range(4) if env.is_move_legal(a)]
             if not legal_moves:
                 break
-            # TODO: action selection
-            # Note: TD learning works fine on 2048 without explicit exploration, but you can still try some exploration methods.
-            if random.random() < epsilon:
-                action = random.choice(legal_moves)
-            else:
-                values = []
-                for a in legal_moves:
-                    temp_env = Game2048EnvNoRandom()
-                    # temp_env = Game2048Env()
-                    temp_env.board = env.board.copy()
-                    temp_env.score = env.score
-                    next_state, _, _, _ = temp_env.step(a)
-                    values.append(approximator.value(next_state))
-                action = legal_moves[np.argmax(values)]
 
-            afterstate_env = Game2048EnvNoRandom()
-            afterstate_env.score = env.score
-            afterstate_env.board = state.copy()
-            afterstate, _, _, _ = afterstate_env.step(action)
+            # Collect afterstates and their values
+            afterstates = []
+            afterstate_values = []
 
+            for a in legal_moves:
+                env_copy = Game2048EnvNoRandom()
+                env_copy.board = env.board.copy()
+                env_copy.score = env.score
+                afterstate, _, _, _ = env_copy.step(a)
+                afterstates.append((afterstate, a))
+                afterstate_values.append(approximator.value(afterstate))
+
+            idx = np.argmax(afterstate_values)
+            selected_afterstate, action = afterstates[idx]
+            selected_value = afterstate_values[idx]
+
+            # Take the action in the real environment
             next_state, new_score, done, _ = env.step(action)
             incremental_reward = new_score - previous_score
             previous_score = new_score
             max_tile = max(max_tile, np.max(next_state))
 
-            # diff = next_state - afterstate
-            # diff_positions = np.where(diff != 0)
-            # num_diff = len(diff_positions[0])
-            # assert(num_diff == 1)
+            # trajectory.append((previous_afterstate, action, incremental_reward, selected_afterstate, done))
 
-            # TODO: Store trajectory or just update depending on the implementation
-            trajectory.append((previous_afterstate, action, incremental_reward, afterstate, done))
+            # previous_afterstate = selected_afterstate
 
-            # current_value = approximator.value(previous_afterstate)
-            # next_value = approximator.value(afterstate) if not done else 0
-            # td_error = incremental_reward + gamma * next_value - current_value
-            # approximator.update(previous_afterstate, td_error, alpha)
+            # Update the value function for the selected afterstate
+            # The target is the immediate reward plus discounted value of next afterstate
+            if done:
+                target = incremental_reward
+            else:
+                # For the next state, we need to look at possible future afterstates
+                next_values = []
+                next_legal_moves = [a for a in range(4) if env.is_move_legal(a)]
+
+                if next_legal_moves:
+                    for a in next_legal_moves:
+                        env_copy = Game2048EnvNoRandom()
+                        env_copy.board = env.board.copy()
+                        env_copy.score = env.score
+                        future_state, _, _, _ = env_copy.step(a)
+                        next_values.append(approximator.value(future_state))
+
+                    future_value = max(next_values) if next_values else 0
+                    target = incremental_reward + gamma * future_value
+                else:
+                    target = incremental_reward
+
+            # Update the value function
+            delta = target - selected_value
+            approximator.update(selected_afterstate, delta, alpha)
 
             state = next_state
-            previous_afterstate = afterstate
 
-        # TODO: If you are storing the trajectory, consider updating it now depending on your implementation.
-        for previous_afterstate, action, incremental_reward, afterstate, done in reversed(trajectory):
-            current_value = approximator.value(previous_afterstate)
-            next_value = approximator.value(afterstate) if not done else 0
-            td_error = incremental_reward + gamma * next_value - current_value
-            approximator.update(previous_afterstate, td_error, alpha)
+        # for previous_afterstate, action, incremental_reward, afterstate, done in reversed(trajectory):
+        #     current_value = approximator.value(previous_afterstate)
+        #     next_value = approximator.value(afterstate) if not done else 0
+        #     td_error = incremental_reward + gamma * next_value - current_value
+        #     approximator.update(previous_afterstate, td_error, alpha)
 
         final_scores.append(env.score)
         success_flags.append(1 if max_tile >= 2048 else 0)
@@ -660,11 +466,9 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
         if (episode + 1) % 100 == 0:
             avg_score = np.mean(final_scores[-100:])
             success_rate = np.sum(success_flags[-100:]) / 100
-            print(f"Episode {previous_episodes+episode+1}/{previous_episodes+num_episodes} | Avg Score: {avg_score:.2f} | Success Rate: {success_rate:.2f} | epsilon: {epsilon}")
+            print(f"Episode {previous_episodes+episode+1}/{previous_episodes+num_episodes} | Avg Score: {avg_score:.2f} | Success Rate: {success_rate:.2f}", flush=True)
 
-            epsilon *= epsilon_decay_rate
-
-        if (episode + 1) % 5000 == 0:
+        if (episode + 1) % 1000 == 0:
             with open(f"Q1_2048_approximator_weights_{previous_episodes+episode+1}.pkl", "wb") as f:
                 pickle.dump(approximator.weights, f)
 
@@ -672,19 +476,25 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
 
 # TODO: Define your own n-tuple patterns
 patterns = [
-    [(0, 0), (0, 1), (0, 2), (0, 3)],
-    [(1, 0), (1, 1), (1, 2), (1, 3)],
-    [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)],
-    [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)],
-    # [(0, 1), (1, 0), (1, 1), (1, 2)],
-    [(0, 1), (1, 1), (2, 2), (0, 2)],
-    [(2, 0), (1, 0), (1, 1), (0, 2), (0, 3)],
+    # [(0,0)],
+    # [(0,1)],
+    # [(1,0)],
+    # [(1,1)],
+    [(0,0), (0,1)],
+    [(1,0), (1,1)],
+    [(0,0), (1,1), (2,2)],
+    [(0,0), (0,1), (0,2), (0,3)],
+    [(1,0), (1,1), (1,2), (1,3)],
+    [(1,0), (0,0), (0,1), (0,2)],
+    [(2,1), (1,1), (1,2), (1,3)],
+    [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2)],
+    [(1,0), (1,1), (1,2), (2,0), (2,1), (2,2)],
 ]
 
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
-# with open("Q1_2048_approximator_weights_200000.pkl", "rb") as f:
-#     approximator.weights = pickle.load(f)
+with open("Q1_2048_approximator_weights_2000.pkl", "rb") as f:
+    approximator.weights = pickle.load(f)
 
 # UCT Node for MCTS
 class UCTNode:
@@ -743,8 +553,7 @@ class TD_MCTS_Node:
 
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
-    def __init__(self, env, approximator, iterations=500, exploration_constant=1.41, rollout_depth=10, gamma=0.99):
-        self.env = env
+    def __init__(self, approximator, iterations=500, exploration_constant=1.41, rollout_depth=10, gamma=0.99):
         self.approximator = approximator
         self.iterations = iterations
         self.c = exploration_constant
@@ -753,7 +562,7 @@ class TD_MCTS:
 
     def create_env_from_state(self, state, score):
         # Create a deep copy of the environment with the given state and score.
-        new_env = copy.deepcopy(self.env)
+        new_env = Game2048EnvNoRandom()
         new_env.board = state.copy()
         new_env.score = score
         return new_env
@@ -765,7 +574,7 @@ class TD_MCTS:
         log_N = math.log(node.visits)
         return max(node.children.values(), key=lambda child: (child.total_reward / child.visits) + self.c * math.sqrt(log_N / child.visits))
 
-    def rollout(self, sim_env, depth):
+    def rollout(self, sim_env: Game2048EnvNoRandom, depth):
         # TODO: Perform a random rollout until reaching the maximum depth or a terminal state.
         # TODO: Use the approximator to evaluate the final state.
         total_reward = 0
@@ -775,10 +584,11 @@ class TD_MCTS:
             if not legal_actions:
                 break
             action = random.choice(legal_actions)
-            board, _, done, _ = sim_env.step(action)
+            board, _, _, _ = sim_env.step(action)
             total_reward += self.approximator.value(board) * discount
             discount *= self.gamma
-            if done:
+            sim_env.add_random_tile()
+            if sim_env.is_game_over():
                 break
         return total_reward + discount * self.approximator.value(sim_env.board)
 
@@ -798,12 +608,14 @@ class TD_MCTS:
         while node.fully_expanded() and node.children:
             node = self.select_child(node)
             sim_env.step(node.action)
+            sim_env.add_random_tile()
 
         # TODO: Expansion: if the node has untried actions, expand an untried action.
         if not sim_env.is_game_over() and node.untried_actions:
             action = random.choice(node.untried_actions)
             node.untried_actions.remove(action)
             new_state, new_score, _, _ = sim_env.step(action)
+            sim_env.add_random_tile()
             new_node = UCTNode(new_state, new_score, node, action)
             node.children[action] = new_node
             node = new_node
@@ -826,7 +638,7 @@ class TD_MCTS:
                 best_action = action
         return best_action, distribution
 
-# td_mcts = TD_MCTS(Game2048Env(), approximator, iterations=100, exploration_constant=math.sqrt(2), rollout_depth=0, gamma=0.99)
+td_mcts = TD_MCTS(approximator, iterations=50, exploration_constant=math.sqrt(2), rollout_depth=10, gamma=0.99)
 
 def get_action(state, score):
 
@@ -837,28 +649,6 @@ def get_action(state, score):
     best_act, _ = td_mcts.best_action_distribution(root)
 
     return best_act
-
-    env.board = state
-    env.score = score
-
-    legal_moves = [a for a in range(4) if env.is_move_legal(a)]
-    if not legal_moves:
-        return 0
-
-    # TODO: Use your N-Tuple approximator to play 2048
-    best_action = None
-    best_value = -float('inf')
-
-    for action in legal_moves:
-        copy_env = copy.deepcopy(env)
-        next_state, _, _, _ = copy_env.step(action)
-        value = approximator.value(next_state)
-
-        if value > best_value:
-            best_value = value
-            best_action = action
-
-    return best_action
 
 if __name__ == "__main__":
     # env = Game2048Env()
@@ -877,7 +667,7 @@ if __name__ == "__main__":
 
     # print("Game over, final score:", env.score)
 
-    final_scores = td_learning(Game2048Env(), approximator, previous_episodes=0, num_episodes=5000, alpha=0.01, gamma=0.99, epsilon=0, epsilon_decay_rate=0.95)
+    final_scores = td_learning(Game2048Env(), approximator, previous_episodes=1000, num_episodes=2000, alpha=0.1, gamma=0.99)
 
     avg_scores = []
     for i in range(0, len(final_scores), 100):
