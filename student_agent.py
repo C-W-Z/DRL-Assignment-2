@@ -577,7 +577,7 @@ class NTupleApproximator:
             weight_idx = i // 8
             self.weights[weight_idx][feature] += alpha * delta
 
-def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=0.01, gamma=0.99, epsilon=0.1):
+def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=0.01, gamma=0.99, epsilon=0.1, epsilon_decay_rate=0.99):
     """
     Trains the 2048 agent using TD-Learning.
 
@@ -594,10 +594,13 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
 
     for episode in range(num_episodes):
         state = env.reset()
+        previous_afterstate = state
         trajectory = []  # Store trajectory data if needed
         previous_score = 0
         done = False
         max_tile = np.max(state)
+
+        # print(episode)
 
         while not done:
             legal_moves = [a for a in range(4) if env.is_move_legal(a)]
@@ -610,7 +613,8 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
             else:
                 values = []
                 for a in legal_moves:
-                    temp_env = Game2048Env()
+                    temp_env = Game2048EnvNoRandom()
+                    # temp_env = Game2048Env()
                     temp_env.board = env.board.copy()
                     temp_env.score = env.score
                     next_state, _, _, _ = temp_env.step(a)
@@ -619,31 +623,36 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
 
             afterstate_env = Game2048EnvNoRandom()
             afterstate_env.score = env.score
-            afterstate_env.board = env.board.copy()
-            afterstate_state, _, _, _ = afterstate_env.step(action)
+            afterstate_env.board = state.copy()
+            afterstate, _, _, _ = afterstate_env.step(action)
 
             next_state, new_score, done, _ = env.step(action)
             incremental_reward = new_score - previous_score
             previous_score = new_score
             max_tile = max(max_tile, np.max(next_state))
 
-            # TODO: Store trajectory or just update depending on the implementation
-            # trajectory.append((state, action, incremental_reward, next_state, done))
+            # diff = next_state - afterstate
+            # diff_positions = np.where(diff != 0)
+            # num_diff = len(diff_positions[0])
+            # assert(num_diff == 1)
 
-            current_value = approximator.value(state)
-            next_value = approximator.value(afterstate_state) if not done else 0
-            td_error = incremental_reward + gamma * next_value - current_value
-            approximator.update(state, td_error, alpha)
+            # TODO: Store trajectory or just update depending on the implementation
+            trajectory.append((previous_afterstate, action, incremental_reward, afterstate, done))
+
+            # current_value = approximator.value(previous_afterstate)
+            # next_value = approximator.value(afterstate) if not done else 0
+            # td_error = incremental_reward + gamma * next_value - current_value
+            # approximator.update(previous_afterstate, td_error, alpha)
 
             state = next_state
+            previous_afterstate = afterstate
 
         # TODO: If you are storing the trajectory, consider updating it now depending on your implementation.
-        # for state, action, reward, next_state, done in reversed(trajectory):
-        #     if done:
-        #         delta = reward - approximator.value(state)
-        #     else:
-        #         delta = reward + gamma * approximator.value(next_state) - approximator.value(state)
-        #     approximator.update(state, delta, alpha)
+        for previous_afterstate, action, incremental_reward, afterstate, done in reversed(trajectory):
+            current_value = approximator.value(previous_afterstate)
+            next_value = approximator.value(afterstate) if not done else 0
+            td_error = incremental_reward + gamma * next_value - current_value
+            approximator.update(previous_afterstate, td_error, alpha)
 
         final_scores.append(env.score)
         success_flags.append(1 if max_tile >= 2048 else 0)
@@ -653,7 +662,7 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
             success_rate = np.sum(success_flags[-100:]) / 100
             print(f"Episode {previous_episodes+episode+1}/{previous_episodes+num_episodes} | Avg Score: {avg_score:.2f} | Success Rate: {success_rate:.2f} | epsilon: {epsilon}")
 
-            epsilon *= 0.99
+            epsilon *= epsilon_decay_rate
 
         if (episode + 1) % 5000 == 0:
             with open(f"Q1_2048_approximator_weights_{previous_episodes+episode+1}.pkl", "wb") as f:
@@ -665,13 +674,17 @@ def td_learning(env, approximator, previous_episodes, num_episodes=50000, alpha=
 patterns = [
     [(0, 0), (0, 1), (0, 2), (0, 3)],
     [(1, 0), (1, 1), (1, 2), (1, 3)],
-    [(0, 0), (0, 1), (1, 0), (1, 1)],
+    [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)],
+    [(0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2)],
+    # [(0, 1), (1, 0), (1, 1), (1, 2)],
+    [(0, 1), (1, 1), (2, 2), (0, 2)],
+    [(2, 0), (1, 0), (1, 1), (0, 2), (0, 3)],
 ]
 
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
-with open("Q1_2048_approximator_weights_200000.pkl", "rb") as f:
-    approximator.weights = pickle.load(f)
+# with open("Q1_2048_approximator_weights_200000.pkl", "rb") as f:
+#     approximator.weights = pickle.load(f)
 
 # UCT Node for MCTS
 class UCTNode:
@@ -813,8 +826,7 @@ class TD_MCTS:
                 best_action = action
         return best_action, distribution
 
-
-td_mcts = TD_MCTS(Game2048Env(), approximator, iterations=100, exploration_constant=math.sqrt(2), rollout_depth=0, gamma=0.99)
+# td_mcts = TD_MCTS(Game2048Env(), approximator, iterations=100, exploration_constant=math.sqrt(2), rollout_depth=0, gamma=0.99)
 
 def get_action(state, score):
 
@@ -865,4 +877,20 @@ if __name__ == "__main__":
 
     # print("Game over, final score:", env.score)
 
-    td_learning(Game2048Env(), approximator, previous_episodes=0, num_episodes=5000, alpha=0.01, gamma=0.99, epsilon=0.1, epsilon_decay_rate=0.99)
+    final_scores = td_learning(Game2048Env(), approximator, previous_episodes=0, num_episodes=5000, alpha=0.01, gamma=0.99, epsilon=0, epsilon_decay_rate=0.95)
+
+    avg_scores = []
+    for i in range(0, len(final_scores), 100):
+        avg_score = np.mean(final_scores[i:i+100])
+        avg_scores.append(avg_score)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(len(final_scores)), final_scores, label='Score')
+    plt.plot(range(100, len(final_scores) + 1, 100), avg_scores, label='Average Score (per 100 episodes)')
+    plt.xlabel('Episode')
+    plt.ylabel('Average Score')
+    plt.title('Average Score Over Training Episodes')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+    plt.close()
