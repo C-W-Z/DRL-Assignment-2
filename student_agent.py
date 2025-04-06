@@ -493,33 +493,8 @@ patterns = [
 
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
-with open("Q1_2048_approximator_weights_4000.pkl", "rb") as f:
+with open("Q1_2048_approximator_weights_8000.pkl", "rb") as f:
     approximator.weights = pickle.load(f)
-
-# UCT Node for MCTS
-class UCTNode:
-    def __init__(self, state, score, parent=None, action=None):
-        """
-        state: current board state (numpy array)
-        score: cumulative score at this node
-        parent: parent node (None for root)
-        action: action taken from parent to reach this node
-        """
-        self.state = state
-        self.score = score
-        self.parent = parent
-        self.action = action
-        self.children = {}
-        self.visits = 0
-        self.total_reward = 0.0
-        env = Game2048Env()
-        env.board = state
-        env.score = score
-        self.untried_actions = [a for a in range(4) if env.is_move_legal(a)]
-
-    def fully_expanded(self):
-		# A node is fully expanded if no legal actions remain untried.
-        return len(self.untried_actions) == 0
 
 # Note: This MCTS implementation is almost identical to the previous one,
 # except for the rollout phase, which now incorporates the approximator.
@@ -616,7 +591,7 @@ class TD_MCTS:
             node.untried_actions.remove(action)
             new_state, new_score, _, _ = sim_env.step(action)
             sim_env.add_random_tile()
-            new_node = UCTNode(new_state, new_score, node, action)
+            new_node = TD_MCTS_Node(new_state, new_score, node, action)
             node.children[action] = new_node
             node = new_node
 
@@ -638,7 +613,7 @@ class TD_MCTS:
                 best_action = action
         return best_action, distribution
 
-td_mcts = TD_MCTS(approximator, iterations=50, exploration_constant=math.sqrt(2), rollout_depth=10, gamma=0.99)
+td_mcts = TD_MCTS(approximator, iterations=100, exploration_constant=math.sqrt(2), rollout_depth=10, gamma=0.99)
 
 def get_action(state, score):
 

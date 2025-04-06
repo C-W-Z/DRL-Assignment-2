@@ -1,4 +1,4 @@
-# Python virsual environment 
+# Python virsual environment
 __pycache__/
 *.pyc
 *.pyo
@@ -7,3 +7,4 @@ __pycache__/
 
 # ignore eval.py
 eval.py
+*.pkl
