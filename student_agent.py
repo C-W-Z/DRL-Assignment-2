@@ -493,7 +493,7 @@ patterns = [
 
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
-with open("Q1_2048_approximator_weights_2000.pkl", "rb") as f:
+with open("Q1_2048_approximator_weights_4000.pkl", "rb") as f:
     approximator.weights = pickle.load(f)
 
 # UCT Node for MCTS
