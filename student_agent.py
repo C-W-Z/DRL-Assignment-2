@@ -27,7 +27,7 @@ TEXT_COLOR = {
     512: "#f9f6f2", 1024: "#f9f6f2", 2048: "#f9f6f2", 4096: "#f9f6f2"
 }
 
-@jit(nopython=True)
+@njit
 def compress_and_merge(row, score):
     size = 4
     # 過濾非零元素
@@ -54,7 +54,7 @@ def compress_and_merge(row, score):
 
     return result, score
 
-@jit(nopython=True)
+@njit
 def move_board(board, direction, score):
     new_board = board.copy()
     moved = False
@@ -90,6 +90,51 @@ def move_board(board, direction, score):
             score = new_score
     return new_board, moved, score
 
+@njit
+def _add_random_tile(board):
+    # Placeholder: add a random tile (2 or 4) to an empty cell
+    empty = np.where(board == 0)
+    if len(empty[0]) > 0:
+        idx = np.random.choice(len(empty[0]))
+        x, y = empty[0][idx], empty[1][idx]
+        board[x, y] = 2 if np.random.random() < 0.9 else 4
+    return board
+
+@njit
+def _is_move_legal(board, action, score):
+    _, moved, _ = move_board(board.copy(), action, score)
+    return moved
+
+@njit
+def get_legal_moves(board, score):
+    return [a for a in range(4) if _is_move_legal(board, a, score)]
+
+@njit
+def _is_game_over(board):
+        if np.any(board == 0):
+            return False
+        size = board.shape[0]
+        for i in range(size):
+            for j in range(size - 1):
+                if board[i, j] == board[i, j+1]:
+                    return False
+        for j in range(size):
+            for i in range(size - 1):
+                if board[i, j] == board[i+1, j]:
+                    return False
+        return True
+
+@njit
+def _step(board, action, score, afterstate=False):
+        board, moved, score = move_board(board, action, score)
+
+        if moved and not afterstate:
+            _add_random_tile(board)
+
+        done = _is_game_over(board)
+
+        return board, score, done, moved
+
 class Game2048Env(gym.Env):
     def __init__(self):
         super(Game2048Env, self).__init__()
@@ -114,37 +159,13 @@ class Game2048Env(gym.Env):
         return self.board
 
     def add_random_tile(self):
-        empty_cells = np.where(self.board == 0)
-        if len(empty_cells[0]) > 0:
-            idx = random.randint(0, len(empty_cells[0]) - 1)
-            x, y = empty_cells[0][idx], empty_cells[1][idx]
-            self.board[x, y] = 2 if random.random() < 0.9 else 4
+        self.board = _add_random_tile(self.board)
 
     def is_game_over(self):
-        if np.any(self.board == 0):
-            return False
-        for i in range(self.size):
-            for j in range(self.size - 1):
-                if self.board[i, j] == self.board[i, j+1]:
-                    return False
-        for j in range(self.size):
-            for i in range(self.size - 1):
-                if self.board[i, j] == self.board[i+1, j]:
-                    return False
+        return _is_game_over(self.board)
 
-        return True
-
-    def step(self, action):
-        assert self.action_space.contains(action), "Invalid action"
-        self.board, moved, self.score = move_board(self.board, action, self.score)
-
-        self.last_move_valid = moved
-
-        if moved:
-            self.add_random_tile()
-
-        done = self.is_game_over()
-
+    def step(self, action, afterstate=False):
+        self.board, self.score, done, self.last_move_valid = _step(self.board, action, self.score, afterstate)
         return self.board, self.score, done, {}
 
     def render(self, mode="human", action=None):
@@ -172,22 +193,8 @@ class Game2048Env(gym.Env):
         plt.gca().invert_yaxis()
         plt.show()
 
-    def simulate_row_move(self, row):
-        new_row = row[row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-        for i in range(len(new_row) - 1):
-            if new_row[i] == new_row[i + 1] and new_row[i] != 0:
-                new_row[i] *= 2
-                new_row[i + 1] = 0
-        new_row = new_row[new_row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-        return new_row
-
-
     def is_move_legal(self, action):
-        temp_board = self.board.copy()
-        new_board, moved, _ = move_board(temp_board, action, self.score)
-        return moved
+        return _is_move_legal(self.board, action, self.score)
 
 class Game2048EnvNoRandom(gym.Env):
     def __init__(self):
@@ -213,25 +220,10 @@ class Game2048EnvNoRandom(gym.Env):
         return self.board
 
     def add_random_tile(self):
-        empty_cells = np.where(self.board == 0)
-        if len(empty_cells[0]) > 0:
-            idx = random.randint(0, len(empty_cells[0]) - 1)
-            x, y = empty_cells[0][idx], empty_cells[1][idx]
-            self.board[x, y] = 2 if random.random() < 0.9 else 4
+        self.board = _add_random_tile(self.board)
 
     def is_game_over(self):
-        if np.any(self.board == 0):
-            return False
-        for i in range(self.size):
-            for j in range(self.size - 1):
-                if self.board[i, j] == self.board[i, j+1]:
-                    return False
-        for j in range(self.size):
-            for i in range(self.size - 1):
-                if self.board[i, j] == self.board[i+1, j]:
-                    return False
-
-        return True
+        return _is_game_over(self.board)
 
     def step(self, action):
         assert self.action_space.contains(action), "Invalid action"
@@ -502,6 +494,31 @@ def init_model():
         with open("Q1_2048_approximator_weights_40000.pkl", "rb") as f:
             approximator.weights = pickle.load(f)
 
+@njit
+def calculate_ucb1(total_reward, visits, parent_visits):
+    if visits == 0:
+        return float('inf')
+    return (total_reward / visits) + np.sqrt(2.0 * np.log(parent_visits) / visits)
+
+@njit
+def calculate_untried_tiles(board, max_samples=10):
+    empty_cells = np.where(board == 0)
+    x_coords, y_coords = empty_cells[0], empty_cells[1]
+    n_empty = len(x_coords)
+    untried = []
+
+    if n_empty <= max_samples:
+        for i in range(n_empty):
+            value = 2 if np.random.random() < 0.9 else 4
+            untried.append((x_coords[i], y_coords[i], value))
+    else:
+        ids = np.random.choice(n_empty, max_samples, replace=False)
+        for i in ids:
+            value = 2 if np.random.random() < 0.9 else 4
+            untried.append((x_coords[i], y_coords[i], value))
+
+    return untried
+
 class AfterstateNode:
     def __init__(self, state, score, parent=None, action=None):
         """
@@ -522,25 +539,11 @@ class AfterstateNode:
         self.untried_random_tiles = []
 
     def calculate_untried_random_tiles(self):
-        empty_cells = np.where(self.env.board == 0)
-        if len(empty_cells[0]) <= 10:
-            for i in range(len(empty_cells[0])):
-                x, y = empty_cells[0][i], empty_cells[1][i]
-                self.untried_random_tiles.append((x, y, 2 if random.random() < 0.9 else 4))
-        else:
-            ids = np.random.choice(len(empty_cells[0]), 10, replace=False)
-            for i in ids:
-                x, y = empty_cells[0][i], empty_cells[1][i]
-                self.untried_random_tiles.append((x, y, 2 if random.random() < 0.9 else 4))
+        self.untried_random_tiles = calculate_untried_tiles(self.env.board)
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
         return len(self.untried_random_tiles) == 0
-
-    def UCB1(self, parent_visits):
-        if self.visits == 0:
-            return np.inf
-        return (self.total_reward / self.visits) + np.sqrt(2 * np.log(parent_visits) / self.visits)
 
 class ChanceNode:
     def __init__(self, state, score, parent=None, child_id=None):
@@ -559,16 +562,11 @@ class ChanceNode:
         self.visits = 0
         self.total_reward = 0.0
         # List of untried actions based on the current state's legal moves
-        self.untried_actions = [a for a in range(4) if self.env.is_move_legal(a)]
+        self.untried_actions = get_legal_moves(state, score)
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
         return len(self.untried_actions) == 0
-
-    def UCB1(self, parent_visits):
-        if self.visits == 0:
-            return np.inf
-        return (self.total_reward / self.visits) + np.sqrt(2 * np.log(parent_visits) / self.visits)
 
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
@@ -589,8 +587,7 @@ class TD_MCTS:
         # Select the child node with the highest UCB1 value.
         if node.visits == 0:
             return random.choice(list(node.children.values()))
-        log_N = math.log(node.visits)
-        return max(node.children.values(), key=lambda child: (child.total_reward / child.visits) + math.sqrt(2 * log_N / child.visits))
+        return max(node.children.values(), key=lambda child: calculate_ucb1(child.total_reward, child.visits, node.visits))
 
     def expand(self, node):
         if node.env.is_game_over():
@@ -632,11 +629,19 @@ class TD_MCTS:
         if afterstate and not sim_env.is_game_over():
             sim_env.add_random_tile()
         for _ in range(depth):
-            legal_actions = [a for a in range(4) if sim_env.is_move_legal(a)]
+            legal_actions = get_legal_moves(sim_env.board, sim_env.score)
             if not legal_actions:
                 break
-            action = random.choice(legal_actions)
-            _, new_score, done, _ = sim_env.step(action) # this is aftersate without adding random tile
+            best_value = -np.inf
+            best_env = None
+            for a in legal_actions:
+                temp_env = self.create_env_from_state(sim_env.board, sim_env.score)
+                next_state, _, _, _ = temp_env.step(a)
+                value = approximator.value(next_state)
+                if value > best_value:
+                    best_value = value
+                    best_env = temp_env
+            sim_env = best_env
             sim_env.add_random_tile()
             if sim_env.is_game_over():
                 break
@@ -687,7 +692,7 @@ def get_action(state, score):
     # best_action = legal_moves[np.argmax(values)]
     # return best_action
 
-    td_mcts = TD_MCTS(approximator, iterations=100, rollout_depth=10)
+    td_mcts = TD_MCTS(approximator, iterations=100, rollout_depth=5)
 
     root = ChanceNode(state, score)
     for _ in range(td_mcts.iterations):
