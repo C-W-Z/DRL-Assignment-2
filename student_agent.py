@@ -502,77 +502,81 @@ def init_model():
         with open("Q1_2048_approximator_weights_40000.pkl", "rb") as f:
             approximator.weights = pickle.load(f)
 
-# approximator = NTupleApproximator(board_size=4, patterns=patterns)
-
-# with open("Q1_2048_approximator_weights_40000.pkl", "rb") as f:
-#     approximator.weights = pickle.load(f)
-
-# def cleanup():
-#     global approximator
-#     del approximator
-#     gc.collect()
-
-# atexit.register(cleanup)
-
-# Note: This MCTS implementation is almost identical to the previous one,
-# except for the rollout phase, which now incorporates the approximator.
-
-# Node for TD-MCTS using the TD-trained value approximator
-class TD_MCTS_Node:
+class AfterstateNode:
     def __init__(self, state, score, parent=None, action=None):
         """
-        state: afterstate (numpy array, 未添加隨機新方塊)
+        state: current board state (numpy array)
         score: cumulative score at this node
-        env: 用於檢查合法動作
-        parent: parent node (None for root, or ChanceNode)
-        action: action taken to reach this node
+        parent: parent node (None for root)
+        action: action taken from parent to reach this node
         """
-        self.state = state
-        self.score = score
+        self.env = Game2048EnvNoRandom()
+        self.env.board = state
+        self.env.score = score
         self.parent = parent
         self.action = action
         self.children = {}
         self.visits = 0
         self.total_reward = 0.0
-        self.max_chance_node = 10
+        # List of untried actions based on the current state's legal moves
+        self.untried_random_tiles = []
+
+    def calculate_untried_random_tiles(self):
+        empty_cells = np.where(self.env.board == 0)
+        if len(empty_cells[0]) <= 10:
+            for i in range(len(empty_cells[0])):
+                x, y = empty_cells[0][i], empty_cells[1][i]
+                self.untried_random_tiles.append((x, y, 2 if random.random() < 0.9 else 4))
+        else:
+            ids = np.random.choice(len(empty_cells[0]), 10, replace=False)
+            for i in ids:
+                x, y = empty_cells[0][i], empty_cells[1][i]
+                self.untried_random_tiles.append((x, y, 2 if random.random() < 0.9 else 4))
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
-        return len(self.children) >= self.max_chance_node
+        return len(self.untried_random_tiles) == 0
+
+    def UCB1(self, parent_visits):
+        if self.visits == 0:
+            return np.inf
+        return (self.total_reward / self.visits) + np.sqrt(2 * np.log(parent_visits) / self.visits)
 
 class ChanceNode:
-    def __init__(self, afterstate, score, parent=None):
+    def __init__(self, state, score, parent=None, child_id=None):
         """
-        parent: 父節點 (TD_MCTS_Node)
-        afterstate: 執行動作後但未添加隨機新方塊的狀態
-        score: 當前分數
+        state: current board state (numpy array)
+        score: cumulative score at this node
+        parent: parent node (None for root)
+        child_id: index of this node in the parent's children list
         """
+        self.env = Game2048EnvNoRandom()
+        self.env.board = state
+        self.env.score = score
         self.parent = parent
-        self.afterstate = afterstate
-        self.score = score
-        self.children = {}  # 隨機新方塊添加後的狀態，鍵為 (tile, pos)，值為 TD_MCTS_Node
+        self.child_id = child_id
+        self.children = {}
         self.visits = 0
         self.total_reward = 0.0
-        self.probabilities = {}  # 每個隨機狀態的概率，例如 {(2, (0,1)): 0.45, (4, (0,1)): 0.05}
-        env = Game2048EnvNoRandom()
-        env.board = state
-        env.score = score
         # List of untried actions based on the current state's legal moves
-        self.untried_actions = [a for a in range(4) if env.is_move_legal(a)]
+        self.untried_actions = [a for a in range(4) if self.env.is_move_legal(a)]
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
         return len(self.untried_actions) == 0
 
+    def UCB1(self, parent_visits):
+        if self.visits == 0:
+            return np.inf
+        return (self.total_reward / self.visits) + np.sqrt(2 * np.log(parent_visits) / self.visits)
+
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
-    def __init__(self, approximator, iterations=500, exploration_constant=1.41, rollout_depth=10, gamma=0.99):
+    def __init__(self, approximator, iterations=500, rollout_depth=10):
         self.approximator = approximator
         self.iterations = iterations
-        self.c = exploration_constant
+        # self.c = exploration_constant
         self.rollout_depth = rollout_depth
-        self.gamma = gamma
-        self.max_chance_node = 10
 
     def create_env_from_state(self, state, score):
         # Create a deep copy of the environment with the given state and score.
@@ -581,168 +585,75 @@ class TD_MCTS:
         new_env.score = score
         return new_env
 
-    def generate_random_tiles(self, afterstate):
-        """
-        模擬隨機新方塊的添加，返回所有可能的隨機狀態及其概率。
-        假設新方塊為 2 (90%) 或 4 (10%)。
-        """
-        empty_positions = [(i, j) for i in range(4) for j in range(4) if afterstate[i, j] == 0]
-        if not empty_positions:
-            return []
-
-        possible_states = []
-        tile_prob = {2: 0.9, 4: 0.1}  # 新方塊概率
-        pos_prob = 1.0 / len(empty_positions)  # 每個空位概率均等
-
-        for pos in empty_positions:
-            for tile, tile_p in tile_prob.items():
-                new_state = afterstate.copy()
-                new_state[pos] = tile
-                prob = tile_p * pos_prob
-                possible_states.append((new_state, tile, pos, prob))
-        return possible_states
-
-    def select_child(self, node):
-        # TODO: Use the UCT formula: Q + c * sqrt(log(parent.visits)/child.visits) to select the best child.
+    def get_best_child(self, node):
+        # Select the child node with the highest UCB1 value.
         if node.visits == 0:
-          return random.choice(list(node.children.values()))
+            return random.choice(list(node.children.values()))
         log_N = math.log(node.visits)
-        return max(node.children.values(), key=lambda child: (child.total_reward / child.visits) + self.c * math.sqrt(log_N / child.visits))
+        return max(node.children.values(), key=lambda child: (child.total_reward / child.visits) + math.sqrt(2 * log_N / child.visits))
 
-    # def rollout(self, sim_env: Game2048EnvNoRandom, depth):
-    #     # TODO: Perform a random rollout until reaching the maximum depth or a terminal state.
-    #     # TODO: Use the approximator to evaluate the final state.
-    #     total_reward = 0
-    #     discount = 1.0
-    #     for _ in range(depth):
-    #         legal_actions = [a for a in range(4) if sim_env.is_move_legal(a)]
-    #         if not legal_actions:
-    #             break
-    #         action = random.choice(legal_actions)
-    #         board, _, _, _ = sim_env.step(action)
-    #         total_reward += self.approximator.value(board) * discount
-    #         discount *= self.gamma
-    #         sim_env.add_random_tile()
-    #         if sim_env.is_game_over():
-    #             break
-    #     return total_reward + discount * self.approximator.value(sim_env.board)
+    def expand(self, node):
+        if node.env.is_game_over():
+            return node
+        if isinstance(node, AfterstateNode):
+            if node.untried_random_tiles:
+                tile = random.choice(node.untried_random_tiles)
+                node.untried_random_tiles.remove(tile)
+                x, y, value = tile
+                new_node = ChanceNode(copy.deepcopy(node.env.board), node.env.score, node, tile)
+                new_node.env.board[x, y] = value
+                node.children[tile] = new_node
+                node = new_node
+        elif isinstance(node, ChanceNode):
+            if node.untried_actions:
+                action = random.choice(node.untried_actions)
+                node.untried_actions.remove(action)
+                new_node = AfterstateNode(copy.deepcopy(node.env.board), node.env.score, node, action)
+                new_node.env.step(action)
+                new_node.calculate_untried_random_tiles()
+                node.children[action] = new_node
+                node = new_node
+                if not node.untried_random_tiles and not node.children:
+                    new_node = ChanceNode(copy.deepcopy(node.env.board), node.env.score, node, 0)
+                    node.children[0] = new_node
+                    node = new_node
+        return node
 
-    def rollout(self, sim_env: Game2048EnvNoRandom, depth):
-        total_reward = 0
-        previous_score = sim_env.score
-        sim_env.add_random_tile()
+    def traverse(self, node):
+        while True:
+            if node.env.is_game_over():
+                return node
+            if not node.fully_expanded():
+                return self.expand(node)
+            node = self.get_best_child(node)
 
+    def rollout(self, afterstate: bool, sim_env: Game2048EnvNoRandom, depth):
+        new_score = 0
+        if afterstate and not sim_env.is_game_over():
+            sim_env.add_random_tile()
         for _ in range(depth):
             legal_actions = [a for a in range(4) if sim_env.is_move_legal(a)]
             if not legal_actions:
                 break
             action = random.choice(legal_actions)
-            _, new_score, done, _ = sim_env.step(action)
-            total_reward += new_score - previous_score
-            previous_score = new_score
-            if done:
-                break
+            _, new_score, done, _ = sim_env.step(action) # this is aftersate without adding random tile
             sim_env.add_random_tile()
             if sim_env.is_game_over():
                 break
-
-        final_value = self.approximator.value(sim_env.board)
-        total_reward += final_value
-        return total_reward
+        return new_score + self.approximator.value(sim_env.board)
 
     def backpropagate(self, node, reward):
-        # TODO: Propagate the obtained reward back up the tree.
         current = node
         while current is not None:
             current.visits += 1
             current.total_reward += reward
             current = current.parent
 
-    def run_simulation(self, root: TD_MCTS_Node):
-        node = root
-        sim_env = self.create_env_from_state(node.state, node.score)
-
-        # TODO: Selection: Traverse the tree until reaching an unexpanded node.
-        while node.fully_expanded() and node.children:
-            node = self.select_child(node)
-            sim_env.step(node.action)
-            sim_env.add_random_tile()
-
-        # TODO: Expansion: if the node has untried actions, expand an untried action.
-        if not sim_env.is_game_over() and node.untried_actions:
-            action = random.choice(node.untried_actions)
-            node.untried_actions.remove(action)
-            new_state, new_score, _, _ = sim_env.step(action)
-            sim_env.add_random_tile()
-            new_node = TD_MCTS_Node(new_state, new_score, node, action)
-            node.children[action] = new_node
-            node = new_node
-
-        # Rollout: Simulate a random game from the expanded node.
-        rollout_reward = self.rollout(sim_env, self.rollout_depth)
-        # Backpropagate the obtained reward.
-        self.backpropagate(node, rollout_reward)
-
     def run_simulation(self, root):
         node = root
-        sim_env = self.create_env_from_state(node.state, node.score)
-
-        # Selection: Traverse the tree until reaching an unexpanded ChanceNode
-        while node.fully_expanded() and node.children:
-            # 選擇最佳動作（ChanceNode）
-            node = self.select_child(node)
-            # 從 ChanceNode 的隨機狀態中隨機選擇一個
-            if not node.children:
-                break
-            total_prob = sum(node.probabilities.values())
-            r = random.uniform(0, total_prob)
-            cum_prob = 0.0
-            for (tile, pos), prob in node.probabilities.items():
-                cum_prob += prob
-                if r <= cum_prob:
-                    node = node.children[(tile, pos)]
-                    break
-        sim_env = self.create_env_from_state(node.state, node.score)
-
-        # Expansion: Expand a ChanceNode or an untried action
-        if not sim_env.is_game_over():
-            # 第一層擴展：從 Afterstate 節點到 Chance 節點
-            if isinstance(node, TD_MCTS_Node) and not node.children:
-                possible_states = self.generate_random_tiles(node.state)
-                if not possible_states:
-                    return  # 無空位可添加新方塊，直接結束
-
-                chance_node = ChanceNode(node.state, node.score, node)
-                node.children[0] = chance_node  # 動作已經執行，僅用一個鍵表示
-
-                for random_state, tile, pos, prob in random.sample(possible_states, self.max_chance_node):
-                    new_env = self.create_env_from_state(random_state, node.score)
-                    new_node = TD_MCTS_Node(random_state, node.score, chance_node, None)
-                    chance_node.children[(tile, pos)] = new_node
-                    chance_node.probabilities[(tile, pos)] = prob
-
-                # 選擇一個 ChanceNode 進行擴展
-                node = list(node.children.values())[0]  # 只有一個 ChanceNode
-
-            # 第二層擴展：從 ChanceNode 選擇一個未嘗試的動作
-            if isinstance(node, ChanceNode) and node.untried_actions:
-                action = random.choice(node.untried_actions)
-                node.untried_actions.remove(action)
-
-                # 從隨機狀態執行動作，生成新的 Afterstate
-                sim_env = self.create_env_from_state(node.children[list(node.children.keys())[0]].state, node.score)
-                new_state, new_score, _, _ = sim_env.step(action)
-                new_node = TD_MCTS_Node(new_state, new_score, node, action)
-                node.children[action] = new_node
-                node = new_node
-
-                # 模擬環境需要從新狀態開始
-                sim_env = self.create_env_from_state(new_state, new_score)
-
-        # Rollout: Simulate a random game from the expanded node
-        rollout_reward = self.rollout(sim_env, self.rollout_depth)
-
-        # Backpropagate the obtained reward
+        node = self.traverse(node)
+        sim_env = self.create_env_from_state(node.env.board, node.env.score)
+        rollout_reward = self.rollout(isinstance(node, AfterstateNode), sim_env, self.rollout_depth)
         self.backpropagate(node, rollout_reward)
 
     def best_action_distribution(self, root):
@@ -757,8 +668,6 @@ class TD_MCTS:
                 best_visits = child.visits
                 best_action = action
         return best_action, distribution
-
-td_mcts = TD_MCTS(approximator, iterations=50, exploration_constant=math.sqrt(2), rollout_depth=10, gamma=0.99)
 
 def get_action(state, score):
     init_model()
@@ -778,7 +687,9 @@ def get_action(state, score):
     # best_action = legal_moves[np.argmax(values)]
     # return best_action
 
-    root = TD_MCTS_Node(state, score)
+    td_mcts = TD_MCTS(approximator, iterations=100, rollout_depth=10)
+
+    root = ChanceNode(state, score)
     for _ in range(td_mcts.iterations):
         td_mcts.run_simulation(root)
 
