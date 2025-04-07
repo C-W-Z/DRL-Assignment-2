@@ -444,7 +444,7 @@ def calculate_untried_tiles(board, max_samples=10):
     return untried
 
 class AfterstateNode:
-    def __init__(self, state, score, parent=None, action=None):
+    def __init__(self, state, score, parent=None, action=None, max_samples=10):
         """
         state: current board state (numpy array)
         score: cumulative score at this node
@@ -461,16 +461,17 @@ class AfterstateNode:
         self.total_reward = 0.0
         # List of untried actions based on the current state's legal moves
         self.untried_random_tiles = []
+        self.max_samples = max_samples
 
     def calculate_untried_random_tiles(self):
-        self.untried_random_tiles = calculate_untried_tiles(self.env.board)
+        self.untried_random_tiles = calculate_untried_tiles(self.env.board, self.max_samples)
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
         return len(self.untried_random_tiles) == 0
 
 class ChanceNode:
-    def __init__(self, state, score, parent=None, child_id=None):
+    def __init__(self, state, score, parent=None):
         """
         state: current board state (numpy array)
         score: cumulative score at this node
@@ -481,7 +482,7 @@ class ChanceNode:
         self.env.board = state
         self.env.score = score
         self.parent = parent
-        self.child_id = child_id
+        # self.child_id = child_id
         self.children = {}
         self.visits = 0
         self.total_reward = 0.0
@@ -492,39 +493,14 @@ class ChanceNode:
         # A node is fully expanded if no legal actions remain untried.
         return len(self.untried_actions) == 0
 
-# @jit
-# def _rollout(board, score, depth, is_afterstate, value_func):
-#     new_score = 0
-#     if is_afterstate and not _is_game_over(board):
-#         _add_random_tile(board)
-#     for _ in range(depth):
-#         legal_actions = get_legal_moves(board, score)
-#         if not legal_actions:
-#             break
-#         best_value = -np.inf
-#         best_board = None
-#         best_score = 0
-#         for a in legal_actions:
-#             next_state, new_score, _, _ = _step(board.copy(), a, score, True)
-#             value = value_func(next_state)
-#             if value > best_value:
-#                 best_value = value
-#                 best_board = next_state
-#                 best_score = new_score
-#         board = best_board
-#         score = best_score
-#         _add_random_tile(board)
-#         if _is_game_over(board):
-#             break
-#     return score + value_func(board)
-
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
-    def __init__(self, approximator, iterations=500, rollout_depth=10):
+    def __init__(self, approximator, iterations=500, rollout_depth=10, max_samples=10):
         self.approximator = approximator
         self.iterations = iterations
         # self.c = exploration_constant
         self.rollout_depth = rollout_depth
+        self.max_samples = max_samples
 
     def create_env_from_state(self, state, score):
         # Create a deep copy of the environment with the given state and score.
@@ -547,7 +523,7 @@ class TD_MCTS:
                 tile = random.choice(node.untried_random_tiles)
                 node.untried_random_tiles.remove(tile)
                 x, y, value = tile
-                new_node = ChanceNode(copy.deepcopy(node.env.board), node.env.score, node, tile)
+                new_node = ChanceNode(copy.deepcopy(node.env.board), node.env.score, node)
                 new_node.env.board[x, y] = value
                 node.children[tile] = new_node
                 node = new_node
@@ -555,13 +531,13 @@ class TD_MCTS:
             if node.untried_actions:
                 action = random.choice(node.untried_actions)
                 node.untried_actions.remove(action)
-                new_node = AfterstateNode(copy.deepcopy(node.env.board), node.env.score, node, action)
+                new_node = AfterstateNode(copy.deepcopy(node.env.board), node.env.score, node, action, self.max_samples)
                 new_node.env.step(action, True)
                 new_node.calculate_untried_random_tiles()
                 node.children[action] = new_node
                 node = new_node
                 if not node.untried_random_tiles and not node.children:
-                    new_node = ChanceNode(copy.deepcopy(node.env.board), node.env.score, node, 0)
+                    new_node = ChanceNode(copy.deepcopy(node.env.board), node.env.score, node)
                     node.children[0] = new_node
                     node = new_node
         return node
@@ -644,7 +620,7 @@ def get_action(state, score):
     # best_action = legal_moves[np.argmax(values)]
     # return best_action
 
-    td_mcts = TD_MCTS(approximator, iterations=100, rollout_depth=5)
+    td_mcts = TD_MCTS(approximator, iterations=200, rollout_depth=10, max_samples=10)
 
     root = ChanceNode(state, score)
     for _ in range(td_mcts.iterations):
