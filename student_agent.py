@@ -196,93 +196,6 @@ class Game2048Env(gym.Env):
     def is_move_legal(self, action):
         return _is_move_legal(self.board, action, self.score)
 
-class Game2048EnvNoRandom(gym.Env):
-    def __init__(self):
-        super(Game2048EnvNoRandom, self).__init__()
-
-        self.size = 4
-        self.board = np.zeros((self.size, self.size), dtype=int)
-        self.score = 0
-
-        # Action space: 0: up, 1: down, 2: left, 3: right
-        self.action_space = spaces.Discrete(4)
-        self.actions = ["up", "down", "left", "right"]
-
-        self.last_move_valid = True
-
-        self.reset()
-
-    def reset(self):
-        self.board = np.zeros((self.size, self.size), dtype=int)
-        self.score = 0
-        self.add_random_tile()
-        self.add_random_tile()
-        return self.board
-
-    def add_random_tile(self):
-        self.board = _add_random_tile(self.board)
-
-    def is_game_over(self):
-        return _is_game_over(self.board)
-
-    def step(self, action):
-        assert self.action_space.contains(action), "Invalid action"
-        self.board, moved, self.score = move_board(self.board, action, self.score)
-
-        self.last_move_valid = moved
-
-        # if moved:
-        #     self.add_random_tile()
-
-        done = self.is_game_over()
-
-        return self.board, self.score, done, {}
-
-    def render(self, mode="human", action=None):
-        fig, ax = plt.subplots(figsize=(4, 4))
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_xlim(-0.5, self.size - 0.5)
-        ax.set_ylim(-0.5, self.size - 0.5)
-
-        for i in range(self.size):
-            for j in range(self.size):
-                value = self.board[i, j]
-                color = COLOR_MAP.get(value, "#3c3a32")
-                text_color = TEXT_COLOR.get(value, "white")
-                rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor="black")
-                ax.add_patch(rect)
-
-                if value != 0:
-                    ax.text(j, i, str(value), ha='center', va='center',
-                            fontsize=16, fontweight='bold', color=text_color)
-        title = f"score: {self.score}"
-        if action is not None:
-            title += f" | action: {self.actions[action]}"
-        plt.title(title)
-        plt.gca().invert_yaxis()
-        plt.show()
-
-    def simulate_row_move(self, row):
-        new_row = row[row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-        for i in range(len(new_row) - 1):
-            if new_row[i] == new_row[i + 1] and new_row[i] != 0:
-                new_row[i] *= 2
-                new_row[i + 1] = 0
-        new_row = new_row[new_row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
-        return new_row
-
-    def is_move_legal(self, action):
-        temp_board = self.board.copy()
-        new_board, moved, _ = move_board(temp_board, action, self.score)
-        return moved
-
-# -------------------------------
-# TODO: Define transformation functions (rotation and reflection), i.e., rot90, rot180, ..., etc.
-# -------------------------------
-
 def rot90(pattern, board_size):
     return [(j, board_size - 1 - i) for (i, j) in pattern]
 
@@ -315,9 +228,24 @@ class NTupleApproximator:
                 self.symmetry_patterns.append(syms_)
 
         self.tile_to_index_lookup = {0: 0}
-        max_tile = 2 ** 20
         for i in range(1, 21):
             self.tile_to_index_lookup[2 ** i] = i
+
+    def save_weights(self, filename):
+        # Convert defaultdict to dict before saving
+        # weights_dict = [dict(w) for w in self.weights]
+        # with open(filename, "wb") as f:
+        #     pickle.dump(weights_dict, f)
+        with open(filename, "wb") as f:
+            pickle.dump(self.weights, f)
+
+    def load_weights(self, filename):
+        # with open(filename, "rb") as f:
+        #     weights_dict = pickle.load(f)
+        # # Restore as defaultdict with lambda
+        # self.weights = [defaultdict(lambda: 2.0, w) for w in weights_dict]
+        with open(filename, "rb") as f:
+            self.weights = pickle.load(f)
 
     def generate_symmetries(self, pattern):
         # TODO: Generate 8 symmetrical transformations of the given pattern.
@@ -340,15 +268,11 @@ class NTupleApproximator:
         """
         Converts tile values to an index for the lookup table.
         """
-        # if tile == 0:
-        #     return 0
-        # else:
-        #     return int(math.log(tile, 2))
         return self.tile_to_index_lookup[tile]
 
     def get_feature(self, board, coords):
         # TODO: Extract tile values from the board based on the given coordinates and convert them into a feature tuple.
-        return tuple(self.tile_to_index(board[i, j]) for (i, j) in coords)
+        return tuple(self.tile_to_index_lookup[board[i, j]] for (i, j) in coords)
 
     def value(self, board):
         # TODO: Estimate the board value: sum the evaluations from all patterns.
@@ -358,13 +282,13 @@ class NTupleApproximator:
             for pattern in syms:
                 feature = self.get_feature(board, pattern)
                 group_value += self.weights[i][feature]
-            total_value += group_value / len(syms)
+            total_value += group_value
         return total_value
 
     def update(self, board, delta, alpha):
         # TODO: Update weights based on the TD error.
         for i, syms in enumerate(self.symmetry_groups):
-            update_value = alpha * delta / len(syms)
+            update_value = alpha * delta / len(self.symmetry_patterns)
             for pattern in syms:
                 feature = self.get_feature(board, pattern)
                 self.weights[i][feature] += update_value
@@ -394,10 +318,10 @@ def td_learning(env, approximator, previous_episodes=0, num_episodes=50000, alph
             afterstate_values = []
 
             for a in legal_moves:
-                env_copy = Game2048EnvNoRandom()
+                env_copy = Game2048Env()
                 env_copy.board = env.board.copy()
                 env_copy.score = env.score
-                afterstate, _, _, _ = env_copy.step(a)
+                afterstate, _, _, _ = env_copy.step(a, True)
                 afterstates.append((afterstate, a))
                 afterstate_values.append(approximator.value(afterstate))
 
@@ -426,10 +350,10 @@ def td_learning(env, approximator, previous_episodes=0, num_episodes=50000, alph
 
                 if next_legal_moves:
                     for a in next_legal_moves:
-                        env_copy = Game2048EnvNoRandom()
+                        env_copy = Game2048Env()
                         env_copy.board = env.board.copy()
                         env_copy.score = env.score
-                        future_state, _, _, _ = env_copy.step(a)
+                        future_state, _, _, _ = env_copy.step(a, True)
                         next_values.append(approximator.value(future_state))
 
                     future_value = max(next_values) if next_values else 0
@@ -497,7 +421,7 @@ def init_model():
 @njit
 def calculate_ucb1(total_reward, visits, parent_visits):
     if visits == 0:
-        return float('inf')
+        return np.inf
     return (total_reward / visits) + np.sqrt(2.0 * np.log(parent_visits) / visits)
 
 @njit
@@ -527,7 +451,7 @@ class AfterstateNode:
         parent: parent node (None for root)
         action: action taken from parent to reach this node
         """
-        self.env = Game2048EnvNoRandom()
+        self.env = Game2048Env()
         self.env.board = state
         self.env.score = score
         self.parent = parent
@@ -553,7 +477,7 @@ class ChanceNode:
         parent: parent node (None for root)
         child_id: index of this node in the parent's children list
         """
-        self.env = Game2048EnvNoRandom()
+        self.env = Game2048Env()
         self.env.board = state
         self.env.score = score
         self.parent = parent
@@ -568,6 +492,32 @@ class ChanceNode:
         # A node is fully expanded if no legal actions remain untried.
         return len(self.untried_actions) == 0
 
+# @jit
+# def _rollout(board, score, depth, is_afterstate, value_func):
+#     new_score = 0
+#     if is_afterstate and not _is_game_over(board):
+#         _add_random_tile(board)
+#     for _ in range(depth):
+#         legal_actions = get_legal_moves(board, score)
+#         if not legal_actions:
+#             break
+#         best_value = -np.inf
+#         best_board = None
+#         best_score = 0
+#         for a in legal_actions:
+#             next_state, new_score, _, _ = _step(board.copy(), a, score, True)
+#             value = value_func(next_state)
+#             if value > best_value:
+#                 best_value = value
+#                 best_board = next_state
+#                 best_score = new_score
+#         board = best_board
+#         score = best_score
+#         _add_random_tile(board)
+#         if _is_game_over(board):
+#             break
+#     return score + value_func(board)
+
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
     def __init__(self, approximator, iterations=500, rollout_depth=10):
@@ -578,7 +528,7 @@ class TD_MCTS:
 
     def create_env_from_state(self, state, score):
         # Create a deep copy of the environment with the given state and score.
-        new_env = Game2048EnvNoRandom()
+        new_env = Game2048Env()
         new_env.board = state.copy()
         new_env.score = score
         return new_env
@@ -606,7 +556,7 @@ class TD_MCTS:
                 action = random.choice(node.untried_actions)
                 node.untried_actions.remove(action)
                 new_node = AfterstateNode(copy.deepcopy(node.env.board), node.env.score, node, action)
-                new_node.env.step(action)
+                new_node.env.step(action, True)
                 new_node.calculate_untried_random_tiles()
                 node.children[action] = new_node
                 node = new_node
@@ -624,28 +574,30 @@ class TD_MCTS:
                 return self.expand(node)
             node = self.get_best_child(node)
 
-    def rollout(self, afterstate: bool, sim_env: Game2048EnvNoRandom, depth):
+    def rollout(self, is_afterstate: bool, sim_env: Game2048Env, depth):
         new_score = 0
-        if afterstate and not sim_env.is_game_over():
-            sim_env.add_random_tile()
+        if is_afterstate and not _is_game_over(sim_env.board):
+            _add_random_tile(sim_env.board)
         for _ in range(depth):
             legal_actions = get_legal_moves(sim_env.board, sim_env.score)
             if not legal_actions:
                 break
             best_value = -np.inf
-            best_env = None
+            best_board = None
+            best_score = 0
             for a in legal_actions:
-                temp_env = self.create_env_from_state(sim_env.board, sim_env.score)
-                next_state, _, _, _ = temp_env.step(a)
-                value = approximator.value(next_state)
+                next_state, new_score, _, _ = _step(sim_env.board.copy(), a, sim_env.score, True)
+                value = self.approximator.value(next_state)
                 if value > best_value:
                     best_value = value
-                    best_env = temp_env
-            sim_env = best_env
-            sim_env.add_random_tile()
-            if sim_env.is_game_over():
+                    best_board = next_state
+                    best_score = new_score
+            sim_env.board = best_board
+            sim_env.score = best_score
+            _add_random_tile(sim_env.board)
+            if _is_game_over(sim_env.board):
                 break
-        return new_score + self.approximator.value(sim_env.board)
+        return sim_env.score + self.approximator.value(sim_env.board)
 
     def backpropagate(self, node, reward):
         current = node
@@ -684,10 +636,10 @@ def get_action(state, score):
 
     # values = []
     # for a in legal_moves:
-    #     temp_env = Game2048EnvNoRandom()
+    #     temp_env = Game2048Env()
     #     temp_env.board = state
     #     temp_env.score = score
-    #     next_state, _, _, _ = temp_env.step(a)
+    #     next_state, _, _, _ = temp_env.step(a, True)
     #     values.append(approximator.value(next_state))
     # best_action = legal_moves[np.argmax(values)]
     # return best_action
@@ -703,22 +655,6 @@ def get_action(state, score):
     return best_act
 
 if __name__ == "__main__":
-    # env = Game2048Env()
-    # state = env.reset()
-    # # env.render()
-
-    # done = False
-    # while not done:
-    #     best_act = get_action(state, env.score)
-    #     print(f"TD-MCTS selected action: {best_act}, Score: {env.score}")
-
-    #     # Execute the selected action and update the state
-    #     state, reward, done, _ = env.step(best_act)
-    #     if done:
-    #         env.render(action=best_act)
-
-    # print("Game over, final score:", env.score)
-
     final_scores = td_learning(Game2048Env(), approximator, previous_episodes=1000, num_episodes=2000, alpha=0.1, gamma=0.99)
 
     avg_scores = []
