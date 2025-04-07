@@ -476,24 +476,16 @@ def td_learning(env, approximator, previous_episodes=0, num_episodes=50000, alph
 
 # TODO: Define your own n-tuple patterns
 patterns = [
-    # [(0,0)],
-    # [(0,1)],
-    # [(1,0)],
-    # [(1,1)],
-    [(0,0), (0,1)],
-    [(1,0), (1,1)],
-    [(0,0), (1,1), (2,2)],
-    [(0,0), (0,1), (0,2), (0,3)],
-    [(1,0), (1,1), (1,2), (1,3)],
-    [(1,0), (0,0), (0,1), (0,2)],
-    [(2,1), (1,1), (1,2), (1,3)],
     [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2)],
     [(1,0), (1,1), (1,2), (2,0), (2,1), (2,2)],
+    [(0,0), (0,1), (1,0), (1,1), (0,2), (0,3)],
+    [(1,0), (1,1), (0,1), (2,1), (1,2), (1,3)],
+    [(0,0), (1,1), (2,2), (0,1), (1,2), (2,3)],
 ]
 
 approximator = NTupleApproximator(board_size=4, patterns=patterns)
 
-with open("Q1_2048_approximator_weights_8000.pkl", "rb") as f:
+with open("Q1_2048_approximator_weights_40000.pkl", "rb") as f:
     approximator.weights = pickle.load(f)
 
 # Note: This MCTS implementation is almost identical to the previous one,
@@ -616,6 +608,21 @@ class TD_MCTS:
 td_mcts = TD_MCTS(approximator, iterations=100, exploration_constant=math.sqrt(2), rollout_depth=10, gamma=0.99)
 
 def get_action(state, score):
+
+    env = Game2048Env()
+    env.board = state
+    env.score = score
+    legal_moves = [a for a in range(4) if env.is_move_legal(a)]
+
+    values = []
+    for a in legal_moves:
+        temp_env = Game2048EnvNoRandom()
+        temp_env.board = state
+        temp_env.score = score
+        next_state, _, _, _ = temp_env.step(a)
+        values.append(approximator.value(next_state))
+    best_action = legal_moves[np.argmax(values)]
+    return best_action
 
     root = TD_MCTS_Node(state, score)
     for _ in range(td_mcts.iterations):
