@@ -1,6 +1,58 @@
 import sys
 import numpy as np
 import random
+from numba import jit, njit
+
+@njit
+def _check_win(board, size):
+    """Optimized check_win function using JIT."""
+    directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+    for r in range(size):
+        for c in range(size):
+            if board[r, c] != 0:
+                current_color = board[r, c]
+                for dr, dc in directions:
+                    prev_r, prev_c = r - dr, c - dc
+                    if 0 <= prev_r < size and 0 <= prev_c < size and board[prev_r, prev_c] == current_color:
+                        continue
+                    count = 0
+                    rr, cc = r, c
+                    while 0 <= rr < size and 0 <= cc < size and board[rr, cc] == current_color:
+                        count += 1
+                        rr += dr
+                        cc += dc
+                    if count >= 6:
+                        return current_color
+    return 0
+
+@njit
+def _evaluate_position(board, size, r, c, color):
+        """Optimized evaluate_position function using JIT."""
+        directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+        score = 0
+
+        for dr, dc in directions:
+            count = 1
+            rr, cc = r + dr, c + dc
+            while 0 <= rr < size and 0 <= cc < size and board[rr, cc] == color:
+                count += 1
+                rr += dr
+                cc += dc
+            rr, cc = r - dr, c - dc
+            while 0 <= rr < size and 0 <= cc < size and board[rr, cc] == color:
+                count += 1
+                rr -= dr
+                cc -= dc
+
+            if count >= 5:
+                score += 10000
+            elif count == 4:
+                score += 5000
+            elif count == 3:
+                score += 1000
+            elif count == 2:
+                score += 100
+        return score
 
 class Connect6Game:
     def __init__(self, size=19):
@@ -8,16 +60,17 @@ class Connect6Game:
         self.board = np.zeros((size, size), dtype=int)  # 0: Empty, 1: Black, 2: White
         self.turn = 1  # 1: Black, 2: White
         self.game_over = False
+        self.last_opponent_move = None
 
     def reset_board(self):
-        """Clears the board and resets the game."""
+        """Resets the board and game state."""
         self.board.fill(0)
         self.turn = 1
         self.game_over = False
         print("= ", flush=True)
 
     def set_board_size(self, size):
-        """Sets the board size and resets the game."""
+        """Changes board size and resets the game."""
         self.size = size
         self.board = np.zeros((size, size), dtype=int)
         self.turn = 1
@@ -25,37 +78,15 @@ class Connect6Game:
         print("= ", flush=True)
 
     def check_win(self):
-        """Checks if a player has won.
-        Returns:
-        0 - No winner yet
-        1 - Black wins
-        2 - White wins
-        """
-        directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-        for r in range(self.size):
-            for c in range(self.size):
-                if self.board[r, c] != 0:
-                    current_color = self.board[r, c]
-                    for dr, dc in directions:
-                        prev_r, prev_c = r - dr, c - dc
-                        if 0 <= prev_r < self.size and 0 <= prev_c < self.size and self.board[prev_r, prev_c] == current_color:
-                            continue
-                        count = 0
-                        rr, cc = r, c
-                        while 0 <= rr < self.size and 0 <= cc < self.size and self.board[rr, cc] == current_color:
-                            count += 1
-                            rr += dr
-                            cc += dc
-                        if count >= 6:
-                            return current_color
-        return 0
+        """Checks if a player has won. Returns 1 (Black wins), 2 (White wins), or 0 (no winner)."""
+        return _check_win(self.board, self.size)
 
     def index_to_label(self, col):
-        """Converts column index to letter (skipping 'I')."""
-        return chr(ord('A') + col + (1 if col >= 8 else 0))  # Skips 'I'
+        """Converts a column index to a letter (skipping 'I')."""
+        return chr(ord('A') + col + (1 if col >= 8 else 0))
 
     def label_to_index(self, col_char):
-        """Converts letter to column index (accounting for missing 'I')."""
+        """Converts a column letter to an index (handling the missing 'I')."""
         col_char = col_char.upper()
         if col_char >= 'J':  # 'I' is skipped
             return ord(col_char) - ord('A') - 1
@@ -63,7 +94,7 @@ class Connect6Game:
             return ord(col_char) - ord('A')
 
     def play_move(self, color, move):
-        """Places stones and checks the game status."""
+        """Processes a move and updates the board."""
         if self.game_over:
             print("? Game over")
             return
@@ -73,50 +104,102 @@ class Connect6Game:
 
         for stone in stones:
             stone = stone.strip()
-            if len(stone) < 2:
-                print("? Invalid format")
-                return
             col_char = stone[0].upper()
-            if not col_char.isalpha():
-                print("? Invalid format")
-                return
             col = self.label_to_index(col_char)
-            try:
-                row = int(stone[1:]) - 1
-            except ValueError:
-                print("? Invalid format")
-                return
-            if not (0 <= row < self.size and 0 <= col < self.size):
-                print("? Move out of board range")
-                return
-            if self.board[row, col] != 0:
-                print("? Position already occupied")
+            row = int(stone[1:]) - 1
+            if not (0 <= row < self.size and 0 <= col < self.size) or self.board[row, col] != 0:
+                print("? Invalid move")
                 return
             positions.append((row, col))
 
         for row, col in positions:
             self.board[row, col] = 1 if color.upper() == 'B' else 2
 
+        self.last_opponent_move = positions[-1]  # Track the opponent's last move
         self.turn = 3 - self.turn
         print('= ', end='', flush=True)
 
     def generate_move(self, color):
-        """Generates a random move for the computer."""
+        """Generates the best move based on predefined rules and ensures output."""
         if self.game_over:
-            print("? Game over")
+            print("? Game over", flush=True)
             return
 
+        my_color = 1 if color.upper() == 'B' else 2
+        opponent_color = 3 - my_color
         empty_positions = [(r, c) for r in range(self.size) for c in range(self.size) if self.board[r, c] == 0]
-        selected = random.sample(empty_positions, 1)
-        move_str = ",".join(f"{self.index_to_label(c)}{r+1}" for r, c in selected)
 
+        # 1. Winning move
+        for r, c in empty_positions:
+            self.board[r, c] = my_color
+            if self.check_win() == my_color:
+                self.board[r, c] = 0
+                move_str = f"{self.index_to_label(c)}{r+1}"
+                self.play_move(color, move_str)
+                print(move_str, flush=True)
+                return
+            self.board[r, c] = 0
+
+        # 2. Block opponent's winning move
+        for r, c in empty_positions:
+            self.board[r, c] = opponent_color
+            if self.check_win() == opponent_color:
+                self.board[r, c] = 0
+                move_str = f"{self.index_to_label(c)}{r+1}"
+                self.play_move(color, move_str)
+                print(move_str, flush=True)
+                return
+            self.board[r, c] = 0
+
+        # 3. Attack: prioritize strong formations
+        best_move = None
+        best_score = -1
+        for r, c in empty_positions:
+            score = self.evaluate_position(r, c, my_color)
+            if score > best_score:
+                best_score = score
+                best_move = (r, c)
+
+        # 4. Defense: prevent opponent from forming strong positions
+        for r, c in empty_positions:
+            opponent_score = self.evaluate_position(r, c, opponent_color)
+            if opponent_score >= best_score:
+                best_score = opponent_score
+                best_move = (r, c)
+
+        # 5. Execute best move
+        if best_move:
+            r, c = best_move
+            move_str = f"{self.index_to_label(c)}{r+1}"
+            self.play_move(color, move_str)
+            print(move_str, flush=True)
+            return
+
+        # 6. Default move: play near last opponent move
+        if self.last_opponent_move:
+            last_r, last_c = self.last_opponent_move
+            potential_moves = [(r, c) for r in range(max(0, last_r - 2), min(self.size, last_r + 3))
+                                           for c in range(max(0, last_c - 2), min(self.size, last_c + 3))
+                                           if self.board[r, c] == 0]
+            if potential_moves:
+                selected = random.choice(potential_moves)
+                move_str = f"{self.index_to_label(selected[1])}{selected[0]+1}"
+                self.play_move(color, move_str)
+                print(move_str, flush=True)
+                return
+
+        # 7. Random move as fallback
+        selected = random.choice(empty_positions)
+        move_str = f"{self.index_to_label(selected[1])}{selected[0]+1}"
         self.play_move(color, move_str)
+        print(move_str, flush=True)
 
-        print(f"{move_str}\n\n", end='', flush=True)
-        print(move_str, file=sys.stderr)
+    def evaluate_position(self, r, c, color):
+        """Evaluates the strength of a position based on alignment potential."""
+        return _evaluate_position(self.board, self.size, r, c, color)
 
     def show_board(self):
-        """Displays the board as text."""
+        """Displays the board in text format."""
         print("= ")
         for row in range(self.size - 1, -1, -1):
             line = f"{row+1:2} " + " ".join("X" if self.board[row, col] == 1 else "O" if self.board[row, col] == 2 else "." for col in range(self.size))
