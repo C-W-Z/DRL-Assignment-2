@@ -390,10 +390,13 @@ def td_learning(env, approximator, previous_episodes=0, num_episodes=50000, alph
 # TODO: Define your own n-tuple patterns
 patterns = [
     [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2)],
-    [(1,0), (1,1), (1,2), (2,0), (2,1), (2,2)],
-    [(0,0), (0,1), (1,0), (1,1), (0,2), (0,3)],
-    [(1,0), (1,1), (0,1), (2,1), (1,2), (1,3)],
-    [(0,0), (1,1), (2,2), (0,1), (1,2), (2,3)],
+    [(0,0), (1,0), (1,1), (0,1), (0,2), (0,3)],
+    [(1,0), (2,0), (2,1), (1,1), (1,2), (1,3)],
+    [(0,0), (0,1), (1,1), (1,2), (1,3), (2,2)],
+    [(0,0), (0,1), (0,2), (1,1), (2,1), (2,2)],
+    [(0,0), (0,1), (1,1), (2,1), (3,1), (3,2)],
+    [(0,0), (0,1), (1,1), (2,1), (3,1), (2,0)],
+    [(1,0), (0,0), (0,1), (0,2), (1,2), (2,2)],
 ]
 
 # patterns = [
@@ -415,14 +418,13 @@ def init_model():
     if approximator is None:
         gc.collect()
         approximator = NTupleApproximator(board_size=4, patterns=patterns)
-        with open("Q1_2048_approximator_weights_40000.pkl", "rb") as f:
-            approximator.weights = pickle.load(f)
+        approximator.load_weights("Q1_2048_approximator_weights_30000.pkl")
 
 @njit
-def calculate_ucb1(total_reward, visits, parent_visits):
+def calculate_ucb1(total_reward, visits, parent_visits, mean_reward, score):
     if visits == 0:
         return np.inf
-    return (total_reward / visits) + np.sqrt(2.0 * np.log(parent_visits) / visits)
+    return (total_reward / visits) + (mean_reward) * np.sqrt(np.log(parent_visits) / visits / 2.0)
 
 @njit
 def calculate_untried_tiles(board, max_samples=10):
@@ -495,12 +497,13 @@ class ChanceNode:
 
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
-    def __init__(self, approximator, iterations=500, rollout_depth=10, max_samples=10):
+    def __init__(self, approximator, iterations=500, rollout_depth=10, max_samples=10, constant=10000):
         self.approximator = approximator
         self.iterations = iterations
         # self.c = exploration_constant
         self.rollout_depth = rollout_depth
         self.max_samples = max_samples
+        self.constant = constant
 
     def create_env_from_state(self, state, score):
         # Create a deep copy of the environment with the given state and score.
@@ -511,9 +514,10 @@ class TD_MCTS:
 
     def get_best_child(self, node):
         # Select the child node with the highest UCB1 value.
-        if node.visits == 0:
+        if node.visits == 0 or isinstance(node, AfterstateNode):
             return random.choice(list(node.children.values()))
-        return max(node.children.values(), key=lambda child: calculate_ucb1(child.total_reward, child.visits, node.visits))
+        mean = sum(child.total_reward / child.visits for child in node.children.values()) / len(node.children)
+        return max(node.children.values(), key=lambda child: calculate_ucb1(child.total_reward, child.visits, node.visits, mean, self.constant))
 
     def expand(self, node):
         if node.env.is_game_over():
@@ -552,28 +556,34 @@ class TD_MCTS:
 
     def rollout(self, is_afterstate: bool, sim_env: Game2048Env, depth):
         new_score = 0
-        if is_afterstate and not _is_game_over(sim_env.board):
-            _add_random_tile(sim_env.board)
+        best_value = self.approximator.value(sim_env.board)
+        if is_afterstate and not sim_env.is_game_over():
+            sim_env.add_random_tile()
         for _ in range(depth):
             legal_actions = get_legal_moves(sim_env.board, sim_env.score)
             if not legal_actions:
                 break
-            best_value = -np.inf
-            best_board = None
-            best_score = 0
-            for a in legal_actions:
-                next_state, new_score, _, _ = _step(sim_env.board.copy(), a, sim_env.score, True)
-                value = self.approximator.value(next_state)
-                if value > best_value:
-                    best_value = value
-                    best_board = next_state
-                    best_score = new_score
-            sim_env.board = best_board
-            sim_env.score = best_score
-            _add_random_tile(sim_env.board)
-            if _is_game_over(sim_env.board):
+            # if np.random.rand() < 0.5:
+            a = random.choice(legal_actions)
+            sim_env.step(a, True)
+            best_value = self.approximator.value(sim_env.board)
+            # else:
+            #     best_value = -np.inf
+            #     best_board = None
+            #     best_score = 0
+            #     for a in legal_actions:
+            #         sim_env.step(a, True)
+            #         value = self.approximator.value(sim_env.board)
+            #         if value > best_value:
+            #             best_value = value
+            #             best_board = sim_env.board
+            #             best_score = sim_env.score
+            #     sim_env.board = best_board.copy()
+            #     sim_env.score = best_score
+            sim_env.add_random_tile()
+            if sim_env.is_game_over():
                 break
-        return sim_env.score + self.approximator.value(sim_env.board)
+        return sim_env.score + best_value
 
     def backpropagate(self, node, reward):
         current = node
@@ -617,16 +627,20 @@ def get_action(state, score):
     #     temp_env.score = score
     #     next_state, _, _, _ = temp_env.step(a, True)
     #     values.append(approximator.value(next_state))
-    # best_action = legal_moves[np.argmax(values)]
+    # id = np.argmax(values)
+    # best_action = legal_moves[id]
     # return best_action
 
-    td_mcts = TD_MCTS(approximator, iterations=200, rollout_depth=10, max_samples=10)
+    td_mcts = TD_MCTS(approximator, iterations=100, rollout_depth=10, max_samples=10, constant=score)
 
     root = ChanceNode(state, score)
     for _ in range(td_mcts.iterations):
         td_mcts.run_simulation(root)
+    print([c.visits for c in root.children.values()])
 
     best_act, _ = td_mcts.best_action_distribution(root)
+
+    print(score, root.total_reward / root.visits, [c.total_reward / c.visits for c in root.children.values()])
 
     return best_act
 
