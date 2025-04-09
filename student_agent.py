@@ -55,6 +55,25 @@ def tdl_estimate(state):
     mv = move(b)
     return tdl.estimate(mv.afterstate())
 
+def filter_moves_by_td_threshold(board, score, legal_moves, threshold_rate=0.8):
+    if not legal_moves:
+        return []
+
+    td_values = []
+    for action in legal_moves:
+        temp_env = Game2048Env()
+        temp_env.board = board.copy()
+        temp_env.score = score
+        temp_env.step(action, True)
+        td_value = temp_env.score + tdl_estimate(temp_env.board)
+        td_values.append((action, td_value))
+
+    max_td = max(v for _, v in td_values)
+    threshold = max_td * threshold_rate
+
+    valid_moves = [action for action, td_value in td_values if td_value >= threshold]
+    return valid_moves
+
 @njit
 def calculate_ucb1(total_reward, visits, parent_visits, constant):
     if visits == 0:
@@ -130,8 +149,9 @@ class ChanceNode:
         if tile == 0:
             self.possibility = 1.0
 
-    def calculate_untried_actions(self):
+    def calculate_untried_actions(self, threshold_rate=0.8):
         self.untried_actions = self.env.legal_moves()
+        self.untried_actions = filter_moves_by_td_threshold(self.env.board, self.env.score, self.untried_actions, threshold_rate)
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
@@ -139,12 +159,13 @@ class ChanceNode:
 
 # TD-MCTS class utilizing a trained approximator for leaf evaluation
 class TD_MCTS:
-    def __init__(self, iterations=500, rollout_depth=10, max_samples=32, constant=1.41):
+    def __init__(self, iterations=500, rollout_depth=10, max_samples=32, constant=1.41, threshold_rate=0.8):
         self.iterations = iterations
         # self.c = exploration_constant
         self.rollout_depth = rollout_depth
         self.max_samples = max_samples
         self.constant = constant
+        self.threshold_rate = threshold_rate
 
     def create_env_from_state(self, state, score):
         # Create a deep copy of the environment with the given state and score.
@@ -168,34 +189,6 @@ class TD_MCTS:
         if node.env.is_game_over():
             return node
 
-        if isinstance(node, AfterstateNode):
-            # return node
-            if node.untried_random_tiles:
-                # 展開所有節點
-                # for tile in node.untried_random_tiles:
-                #     x, y, value = tile
-                #     new_node = ChanceNode(node.env.board, node.env.score, node, value)
-                #     new_node.env.board[x, y] = value
-                #     node.children[tile] = new_node
-                #     new_node.calculate_untried_actions()
-                    # sim_env = self.create_env_from_state(new_node.env.board, new_node.env.score)
-                    # rollout_reward = self.rollout(False, sim_env, self.rollout_depth)
-                    # constant = 0.9 if value == 2 else 0.1
-                    # self.backpropagate(new_node, rollout_reward * constant, constant)
-                # node.untried_random_tiles = []
-                # return self.get_best_child(node)
-                poss = np.array([t[2] for t in node.untried_random_tiles], dtype=np.float32)
-                poss /= np.sum(poss)
-                tileid = np.random.choice(len(node.untried_random_tiles), p=poss)
-                tile = node.untried_random_tiles[tileid]
-                node.untried_random_tiles.remove(tile)
-                x, y, value = tile
-                new_node = ChanceNode(node.env.board, node.env.score, node, value)
-                new_node.env.board[x, y] = value
-                node.children[tile] = new_node
-                new_node.calculate_untried_actions()
-                node = new_node
-
         if isinstance(node, ChanceNode):
             # assert(len(node.children) + len(node.untried_actions) == len(get_legal_moves(node.env.board, node.env.score)))
             if node.untried_actions:
@@ -216,8 +209,36 @@ class TD_MCTS:
                 if not node.untried_random_tiles and not node.children:
                     new_node = ChanceNode(node.env.board, node.env.score, node, 0)
                     node.children[0] = new_node
-                    new_node.calculate_untried_actions()
+                    new_node.calculate_untried_actions(self.threshold_rate)
                     node = new_node
+
+        if isinstance(node, AfterstateNode):
+            # return node
+            if node.untried_random_tiles:
+                # 展開所有節點
+                # for tile in node.untried_random_tiles:
+                #     x, y, value = tile
+                #     new_node = ChanceNode(node.env.board, node.env.score, node, value)
+                #     new_node.env.board[x, y] = value
+                #     node.children[tile] = new_node
+                #     new_node.calculate_untried_actions(self.threshold_rate)
+                    # sim_env = self.create_env_from_state(new_node.env.board, new_node.env.score)
+                    # rollout_reward = self.rollout(False, sim_env, self.rollout_depth)
+                    # constant = 0.9 if value == 2 else 0.1
+                    # self.backpropagate(new_node, rollout_reward * constant, constant)
+                # node.untried_random_tiles = []
+                # return self.get_best_child(node)
+                poss = np.array([t[2] for t in node.untried_random_tiles], dtype=np.float32)
+                poss /= np.sum(poss)
+                tileid = np.random.choice(len(node.untried_random_tiles), p=poss)
+                tile = node.untried_random_tiles[tileid]
+                node.untried_random_tiles.remove(tile)
+                x, y, value = tile
+                new_node = ChanceNode(node.env.board, node.env.score, node, value)
+                new_node.env.board[x, y] = value
+                node.children[tile] = new_node
+                new_node.calculate_untried_actions(self.threshold_rate)
+                node = new_node
 
         return node
 
@@ -237,7 +258,8 @@ class TD_MCTS:
             legal_actions = sim_env.legal_moves()
             if not legal_actions:
                 break
-            a = random.choice(legal_actions)
+            valid_actions = filter_moves_by_td_threshold(sim_env.board, sim_env.score, legal_actions, self.threshold_rate)
+            a = random.choice(valid_actions)
             # a = get_tdl_action(sim_env.board)
             sim_env.step(a, True)
             estim = tdl_estimate(sim_env.board)
@@ -264,15 +286,29 @@ class TD_MCTS:
         return max(root.children.items(), key=lambda child: child[1].total_reward / child[1].visits)
 
 root = None
-td_mcts = TD_MCTS(iterations=10000, rollout_depth=0, constant=np.sqrt(2))
+td_mcts = TD_MCTS(iterations=4, rollout_depth=0, constant=np.sqrt(2), threshold_rate=0.8)
 
 def get_action(state, score):
     init_model()
 
+    legal_moves = get_legal_moves(state, score)
+    legal_moves = filter_moves_by_td_threshold(state, score, legal_moves, threshold_rate=0.8)
+
+    # legal_moves = filter_moves_keep_max_in_corner(state, legal_moves)
+    # values = []
+    # for a in legal_moves:
+    #     temp_env = Game2048Env()
+    #     temp_env.board = state.copy()
+    #     temp_env.score = score
+    #     temp_env.step(a, True)
+    #     values.append(temp_env.score + tdl_estimate(temp_env.board))
+    # action = legal_moves[np.argmax(values)]
+    # return action
+
     global root
     if root is None:
         root = ChanceNode(state, score)
-        root.calculate_untried_actions()
+        root.calculate_untried_actions(td_mcts.threshold_rate)
     else:
         # assert(isinstance(root, AfterstateNode))
         find = False
@@ -284,10 +320,9 @@ def get_action(state, score):
                 break
         if not find:
             root = ChanceNode(state, score)
-            root.calculate_untried_actions()
+            root.calculate_untried_actions(td_mcts.threshold_rate)
     # assert(isinstance(root, ChanceNode))
 
-    legal_moves = get_legal_moves(state, score)
     for _ in range(len(legal_moves)):
     # for _ in range(td_mcts.iterations):
         td_mcts.run_simulation(root)
@@ -336,7 +371,7 @@ if __name__ == "__main__":
             break
         # action = get_action(env.board, env.score)
         # action = get_tdl_action(env.board)
-        legal_moves = filter_moves_keep_max_in_corner(env.board, legal_moves)
+        # legal_moves = filter_moves_keep_max_in_corner(env.board, legal_moves)
         values = []
         for a in legal_moves:
             temp_env = Game2048Env()

@@ -190,37 +190,25 @@ class Game2048Env(gym.Env):
         return get_legal_moves(self.board, self.score)
 
 @njit
-def find_max_tile_corner(board):
-    max_tile = np.max(board)
-    max_positions = np.where(board == max_tile)
-    corners = [(3, 3), (3, 0), (0, 3), (0, 0)]
-    corner = None
-    for x, y in zip(max_positions[0], max_positions[1]):
-        if (x, y) in corners:
-            corner = (x, y)
-            break
-    return corner
-
-@njit
-def is_max_tile_in_corner(board, corner):
+def is_max_tile_in_corner(board):
     max_tile = np.max(board)
     max_positions = np.where(board == max_tile)
     for x, y in zip(max_positions[0], max_positions[1]):
-        if (x, y) == corner:
+        if (x, y) in [(3, 3), (3, 0), (0, 3), (0, 0)]:
             return True
     return False
 
 def filter_moves_keep_max_in_corner(board, legal_moves):
-    corner = find_max_tile_corner(board)
-    if corner is None:
-        return legal_moves
+    # corner = find_max_tile_corner(board)
+    # if corner is None:
+    #     return legal_moves
 
     valid_moves = []
     for action in legal_moves:
         temp_env = Game2048Env()
         temp_env.board = board.copy()
         temp_env.step(action, True)
-        if is_max_tile_in_corner(temp_env.board, corner):
+        if is_max_tile_in_corner(temp_env.board):
             valid_moves.append(action)
 
     if not valid_moves:
