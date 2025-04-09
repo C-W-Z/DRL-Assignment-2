@@ -51,7 +51,7 @@ def calculate_ucb1(total_reward, visits, parent_visits, constant):
     if visits == 0:
         return np.inf
     # return (total_reward / visits - score) + (mean_reward - score) * np.sqrt(np.log(parent_visits) / visits / 2.0)
-    return (total_reward / visits) + constant * np.sqrt(np.log(parent_visits) / visits)
+    return np.log(total_reward / visits) + constant * np.sqrt(np.log(parent_visits) / visits)
 
 @njit
 def calculate_untried_tiles(board, max_samples=32):
@@ -81,7 +81,7 @@ class AfterstateNode:
         action: action taken from parent to reach this node
         """
         self.env = Game2048Env()
-        self.env.board = state
+        self.env.board = state.copy()
         self.env.score = score
         self.parent = parent
         self.action = action
@@ -108,7 +108,7 @@ class ChanceNode:
         child_id: index of this node in the parent's children list
         """
         self.env = Game2048Env()
-        self.env.board = state
+        self.env.board = state.copy()
         self.env.score = score
         self.parent = parent
         # self.child_id = child_id
@@ -116,10 +116,13 @@ class ChanceNode:
         self.visits = 0
         self.total_reward = 0.0
         # List of untried actions based on the current state's legal moves
-        self.untried_actions = get_legal_moves(state, score)
+        self.untried_actions = []
         self.possibility = 0.9 if tile == 2 else 0.1
         if tile == 0:
             self.possibility = 1.0
+
+    def calculate_untried_actions(self):
+        self.untried_actions = self.env.legal_moves()
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
@@ -150,35 +153,62 @@ class TD_MCTS:
             poss = np.array([c.possibility for c in child_list], dtype=np.float32)
             poss /= np.sum(poss)
             return np.random.choice(child_list, p=poss)
-        constant = self.constant * max(child.total_reward / child.visits for child in node.children.values())
-        return max(node.children.values(), key=lambda child: calculate_ucb1(child.total_reward, child.visits, node.visits, constant))
+        return max(node.children.values(), key=lambda child: calculate_ucb1(child.total_reward, child.visits, node.visits,  self.constant))
 
     def expand(self, node):
         if node.env.is_game_over():
             return node
-        if isinstance(node, AfterstateNode):
-            if node.untried_random_tiles:
-                tile = random.choice(node.untried_random_tiles)
-                node.untried_random_tiles.remove(tile)
-                x, y, value = tile
-                new_node = ChanceNode(node.env.board.copy(), node.env.score, node, value)
-                new_node.env.board[x, y] = value
-                node.children[tile] = new_node
-                node = new_node
+
         if isinstance(node, ChanceNode):
+            assert(len(node.children) + len(node.untried_actions) == len(get_legal_moves(node.env.board, node.env.score)))
             if node.untried_actions:
-                action = random.choice(node.untried_actions)
+                values = []
+                for a in node.untried_actions:
+                    temp_env = self.create_env_from_state(node.env.board, node.env.score)
+                    temp_env.step(a, True)
+                    values.append(temp_env.score + tdl_estimate(temp_env.board))
+                action = node.untried_actions[np.argmax(values)]
+                # action = random.choice(node.untried_actions)
                 # action = node.untried_actions[0]
                 node.untried_actions.remove(action)
-                new_node = AfterstateNode(node.env.board.copy(), node.env.score, node, action, self.max_samples)
+                new_node = AfterstateNode(node.env.board, node.env.score, node, action, self.max_samples)
                 new_node.env.step(action, True)
                 new_node.calculate_untried_random_tiles()
                 node.children[action] = new_node
                 node = new_node
                 if not node.untried_random_tiles and not node.children:
-                    new_node = ChanceNode(node.env.board.copy(), node.env.score, node, 0)
+                    new_node = ChanceNode(node.env.board, node.env.score, node, 0)
                     node.children[0] = new_node
+                    new_node.calculate_untried_actions()
                     node = new_node
+
+        if isinstance(node, AfterstateNode):
+            # return node
+            if node.untried_random_tiles:
+                # 展開所有節點
+                # for tile in node.untried_random_tiles:
+                #     x, y, value = tile
+                #     new_node = ChanceNode(node.env.board, node.env.score, node, value)
+                #     new_node.env.board[x, y] = value
+                #     node.children[tile] = new_node
+                #     new_node.calculate_untried_actions()
+                    # sim_env = self.create_env_from_state(new_node.env.board, new_node.env.score)
+                    # rollout_reward = self.rollout(False, sim_env, self.rollout_depth)
+                    # constant = 0.9 if value == 2 else 0.1
+                    # self.backpropagate(new_node, rollout_reward * constant, constant)
+                # node.untried_random_tiles = []
+                # return self.get_best_child(node)
+                poss = np.array([t[2] for t in node.untried_random_tiles], dtype=np.float32)
+                poss /= np.sum(poss)
+                tileid = np.random.choice(len(node.untried_random_tiles), p=poss)
+                tile = node.untried_random_tiles[tileid]
+                node.untried_random_tiles.remove(tile)
+                x, y, value = tile
+                new_node = ChanceNode(node.env.board, node.env.score, node, value)
+                new_node.env.board[x, y] = value
+                node.children[tile] = new_node
+                new_node.calculate_untried_actions()
+                node = new_node
         return node
 
     def traverse(self, node):
@@ -190,26 +220,23 @@ class TD_MCTS:
             node = self.get_best_child(node)
 
     def rollout(self, is_afterstate: bool, sim_env: Game2048Env, depth):
-        best_value = tdl_estimate(sim_env.board)
-        # if is_afterstate and not sim_env.is_game_over():
-        #     sim_env.add_random_tile()
-        # for _ in range(depth):
-        #     legal_actions = get_legal_moves(sim_env.board, sim_env.score)
-        #     if not legal_actions:
-        #         break
-        #     a = random.choice(legal_actions)
-        #     sim_env.step(a, True)
-        #     best_value = tdl_estimate(sim_env.board)
-        #     sim_env.add_random_tile()
-        #     if sim_env.is_game_over():
-        #         break
-        return sim_env.score + best_value
+        estim = tdl_estimate(sim_env.board)
+        if is_afterstate and not sim_env.is_game_over():
+            sim_env.add_random_tile()
+        for _ in range(depth):
+            legal_actions = get_legal_moves(sim_env.board, sim_env.score)
+            if not legal_actions:
+                break
+            a = random.choice(legal_actions)
+            # a = get_tdl_action(sim_env.board)
+            sim_env.step(a, True)
+            estim = tdl_estimate(sim_env.board)
+            sim_env.add_random_tile()
+            if sim_env.is_game_over():
+                break
+        return sim_env.score + estim
 
-    def backpropagate(self, node, reward):
-        count = 1
-        # if isinstance(node, ChanceNode):
-        #     count = node.possibility
-        #     reward *= node.possibility
+    def backpropagate(self, node, reward, count=1):
         current = node
         while current is not None:
             current.visits += count
@@ -224,32 +251,64 @@ class TD_MCTS:
         self.backpropagate(node, rollout_reward)
 
     def best_action_distribution(self, root):
-        # Compute the normalized visit count distribution for each child of the root.
         return max(root.children.items(), key=lambda child: child[1].total_reward / child[1].visits)
-        # total_visits = sum(child.visits for child in root.children.values())
-        # distribution = np.zeros(4)
-        # best_visits = -1
-        # best_action = None
-        # for action, child in root.children.items():
-        #     distribution[action] = child.visits / total_visits if total_visits > 0 else 0
-        #     if child.visits > best_visits:
-        #         best_visits = child.visits
-        #         best_action = action
-        # return best_action, distribution
+
+root = None
+td_mcts = TD_MCTS(iterations=1000, rollout_depth=2, constant=np.sqrt(2))
 
 def get_action(state, score):
     init_model()
-    td_mcts = TD_MCTS(iterations=1000, rollout_depth=0, constant=np.sqrt(2))
 
-    root = ChanceNode(state, score)
-    for _ in range(len(get_legal_moves(state, score))):
-    # for _ in range(td_mcts.iterations):
+    legal_moves = get_legal_moves(state, score)
+
+    global root
+    if root is None:
+        root = ChanceNode(state, score)
+        root.calculate_untried_actions()
+    else:
+        assert(isinstance(root, AfterstateNode))
+        find = False
+        for c in root.children.values():
+            if score == c.env.score and np.array_equal(state, c.env.board):
+                root = c
+                root.parent = None
+                find = True
+                break
+        if not find:
+            root = ChanceNode(state, score)
+            root.calculate_untried_actions()
+    assert(isinstance(root, ChanceNode))
+
+    # for _ in range(len(legal_moves)):
+    for _ in range(td_mcts.iterations):
         td_mcts.run_simulation(root)
 
     best_act, s = td_mcts.best_action_distribution(root)
 
+    assert(len(root.untried_actions) == 0)
+    assert(len(root.children) == len(legal_moves))
+
+    values = []
+    for a in legal_moves:
+        temp_env = Game2048Env()
+        temp_env.board = state.copy()
+        temp_env.score = score
+        temp_env.step(a, True)
+        values.append(temp_env.score + tdl_estimate(temp_env.board))
+    children = []
+    visits = []
+    for a, c in root.children.items():
+        children.append((a, c.total_reward / c.visits))
+        visits.append((a, c.visits))
+    children.sort()
+    visits.sort()
+
     t = '\t' if len(root.children) < 4 else ''
-    print(f"{best_act}, {int(s.total_reward / s.visits)}, {[int(c.visits) for c in root.children.values()]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(c.total_reward / c.visits) for c in root.children.values()]}")
+    # print(f"{best_act}, {int(s.total_reward / s.visits)}, {[int(c.visits) for c in root.children.values()]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(c.total_reward / c.visits) for c in root.children.values()]}")
+    print(f"{[int(v) for _, v in visits]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(v) for _, v in children]}\t{t}{[int(v) for v in values]}")
+
+    root = root.children[best_act]
+    assert(isinstance(root, AfterstateNode))
 
     return best_act
 
