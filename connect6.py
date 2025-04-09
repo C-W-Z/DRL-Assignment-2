@@ -26,13 +26,13 @@ def _evaluate_position(board, size, r, c, color):
         if count >= 6:
             score += 1000
         elif count == 5:
-            score += 150
+            score += 500
         elif count == 4:
-            score += 50
+            score += 100
         elif count == 3:
             score += 10
         elif count == 2:
-            score += 2
+            score += 1
 
         count = 1
         rr, cc = r + dr, c + dc
@@ -49,15 +49,15 @@ def _evaluate_position(board, size, r, c, color):
         if count >= 6:
             score += 1000
         elif count == 5:
-            score += 200
+            score += 600
         elif count == 4:
-            score += 75
+            score += 120
         elif count == 3:
             score += 10
         elif count == 2:
-            score += 2
+            score += 1
 
-    return score if score > 0 else 1
+    return score
 
 @njit
 def manhattan_distance(pos1, pos2):
@@ -103,6 +103,7 @@ class Connect6Game:
         self.last_opponent_move = None
         self.move_count = 0
         self.turn_moves = 0
+        # self.mcts = MCTS(10, 1000)
 
     def reset_board(self):
         """Resets the board and game state."""
@@ -111,6 +112,7 @@ class Connect6Game:
         self.game_over = False
         self.move_count = 0
         self.turn_moves = 0
+        # self.mcts = MCTS(10, 1000)
         print("= ", flush=True)
 
     def set_board_size(self, size):
@@ -121,6 +123,7 @@ class Connect6Game:
         self.game_over = False
         self.move_count = 0
         self.turn_moves = 0
+        # self.mcts = MCTS(10, 1000)
         print("= ", flush=True)
 
     def availables(self):
@@ -182,10 +185,18 @@ class Connect6Game:
                 return
             positions.append((row, col))
 
+        self.last_opponent_move = positions[-1]  # Track the opponent's last move
+        # self.mcts.update_with_move(positions[-1])
+
         for row, col in positions:
             self.board[row, col] = 1 if color.upper() == 'B' else 2
 
-        self.last_opponent_move = positions[-1]  # Track the opponent's last move
+            self.move_count += 1
+            self.turn_moves += 1
+            if (self.move_count == 1 and color.upper() == 'B') or self.turn_moves == 2:
+                self.turn = 3 - self.turn
+                self.turn_moves = 0
+
         # self.turn = 3 - self.turn
         print('= ', end='', flush=True)
 
@@ -217,7 +228,7 @@ class Connect6Game:
         #     print("? Turn already completed, wait for opponent's move")
         #     return
 
-        mcts = MCTS(5, 1000)
+        mcts = MCTS(10, 1000)
         move = mcts.get_move(self)
         print([c.visits for c in mcts.root.children.values()], file=sys.stderr)
         print(f"move={move}, size={self.size}, {self.game_over}", file=sys.stderr)
@@ -346,20 +357,53 @@ def policy_value_func(game: Connect6Game, max_distance=3):
 
 #     # 將分數轉換為概率（簡單正規化）
 #     scores = np.array(scores)
-#     # if scores.max() == 0:  # 如果所有分數為 0，均勻分佈
-#     #     probs = np.ones(len(availables)) / len(availables)
-#     # else:
-#     probs = scores / scores.sum()  # 正規化為概率
+#     if scores.max() == 0:  # 如果所有分數為 0，均勻分佈
+#         probs = np.ones(len(nearby_availables)) / len(nearby_availables)
+#     else:
+#         probs = scores / scores.sum()  # 正規化為概率
 
 #     return zip(nearby_availables, probs)
 
+def get_rule_base_action(game: Connect6Game, nearby_availables):
+    my_color = game.turn
+    opponent_color = 3 - my_color
+    # empty_positions = game.availables()
+
+    for r, c in nearby_availables:
+        game.board[r, c] = my_color
+        if game.check_win() == my_color:
+            game.board[r, c] = 0
+            return (r, c)
+        game.board[r, c] = 0
+
+    for r, c in nearby_availables:
+        game.board[r, c] = opponent_color
+        if game.check_win() == opponent_color:
+            game.board[r, c] = 0
+            return (r, c)
+        game.board[r, c] = 0
+
+    scores = []
+    best_move = None
+    best_score = -1
+    for r, c in nearby_availables:
+        score = game.evaluate_position(r, c, my_color)
+        scores.append(score)
+        if score > best_score:
+            best_score = score
+            best_move = (r, c)
+
+    if max(scores) == 0:  # 如果所有分數為 0，均勻分佈
+        return random.choice(nearby_availables)
+    else:
+        return best_move
 
 def rollout_policy_func(game: Connect6Game, nearby_availables):
     """模拟神经网络随机生成各个节点的胜率P"""
     # rollout randomly
-    availables = game.availables()
-    action_probs = np.random.rand(len(availables))
-    return zip(availables, action_probs)
+    # availables = game.availables()
+    action_probs = np.random.rand(len(nearby_availables))
+    return zip(nearby_availables, action_probs)
 
 class MCTSNode:
     def __init__(self, parent=None, prob=1.0):
@@ -382,10 +426,6 @@ class MCTSNode:
         self.visits += 1
         self.Q += 1.0 * (leaf_value - self.Q) / self.visits
 
-    def update_recursive(self, leaf_value):
-        if self.parent:
-            self.parent.update_recursive(-leaf_value)
-        self.update(leaf_value)
 
     def get_ucb(self, exploration_constant):
         return self.Q + (exploration_constant * self.P * np.sqrt(self.parent.visits) / (1 + self.visits))
@@ -414,7 +454,7 @@ class MCTS:
         # print("select", file=sys.stderr)
 
         # expand
-        nearby_availables, action_probs = policy_value_func(state, max_distance=2)
+        nearby_availables, action_probs = policy_value_func(state)
         end, winner = state.game_end()
         if not end:
             node.expand(nearby_availables, action_probs)
@@ -440,8 +480,11 @@ class MCTS:
             end, winner = state.game_end()
             if end:
                 break
-            action_probs = rollout_policy_func(state, nearby_availables)
-            max_action = max(action_probs, key=itemgetter(1))[0]
+            # action_probs = rollout_policy_func(state, nearby_availables)
+            # max_action = max(action_probs, key=itemgetter(1))[0]
+            # print("get_rule_base_action", file=sys.stderr)
+            max_action = get_rule_base_action(state, nearby_availables)
+            # print(f"{max_action}", file=sys.stderr)
             state.do_move(max_action)
         # else:
         #     print("WARNING: rollout reached move limit", file=sys.stderr)
@@ -451,16 +494,25 @@ class MCTS:
             return 0
         return 1 if winner == player else -1
 
-    def get_move(self, state):
+    def get_move(self, state: Connect6Game):
         for n in range(self.n_playout):
+            # state_copy = Connect6Game(state.size)
+            # state_copy.size = state.size
+            # state_copy.board = state.board
+            # state_copy.turn = state.turn
+            # state_copy.game_over = state.game_over
+            # state_copy.winner = state.winner
+            # state_copy.last_opponent_move = state.last_opponent_move
+            # state_copy.move_count = state.move_count
+            # state_copy.turn_moves = state.turn_moves
             state_copy = copy.deepcopy(state)
             # print(f"playout {n}", file=sys.stderr)
             self.playout(state_copy)
         _max = max(self.root.children.items(), key=lambda c: c[1].visits)
-        # _min = min(self.root.children.values(), key=lambda c: c.visits)
-        # print(f"{_max[1].visits}, {_min.visits}")
-        # if _max[1].visits - _min.visits <= 1:
-        #     return random.choice(list(self.root.children.keys()))
+        _min = min(self.root.children.values(), key=lambda c: c.visits)
+        print(f"{_max[1].visits}, {_min.visits}", file=sys.stderr)
+        if _max[1].visits - _min.visits <= 1:
+            return random.choice(list(self.root.children.keys()))
         return _max[0]
 
     def update_with_move(self, last_move):
