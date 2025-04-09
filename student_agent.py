@@ -1,7 +1,7 @@
 import numpy as np
 from Game2048Env import Game2048Env, get_legal_moves
 from TDL2048 import board, learning, pattern, move
-import gc, atexit, random
+import gc, random
 from numba import njit
 
 def numpy_to_bitboard(np_board):
@@ -34,14 +34,6 @@ def init_model():
         tdl.add_feature(pattern([4, 5, 6, 8, 9, 10]))
 
         tdl.load("2048.bin")
-        gc.collect()
-
-def cleanup():
-    global tdl
-    del tdl
-    gc.collect()
-
-atexit.register(cleanup)
 
 def get_tdl_action(state):
     bitboard_state = numpy_to_bitboard(state)
@@ -250,8 +242,8 @@ def get_action(state, score):
     td_mcts = TD_MCTS(iterations=1000, rollout_depth=0, constant=np.sqrt(2))
 
     root = ChanceNode(state, score)
-    # for _ in range(len(get_legal_moves(state, score))):
-    for _ in range(td_mcts.iterations):
+    for _ in range(len(get_legal_moves(state, score))):
+    # for _ in range(td_mcts.iterations):
         td_mcts.run_simulation(root)
 
     best_act, s = td_mcts.best_action_distribution(root)
