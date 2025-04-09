@@ -1,5 +1,5 @@
 import numpy as np
-from Game2048Env import Game2048Env, get_legal_moves
+from Game2048Env import Game2048Env, get_legal_moves, filter_moves_keep_max_in_corner
 from TDL2048 import board, learning, pattern, move
 import gc, random
 from numba import njit
@@ -28,12 +28,21 @@ def init_model():
         tdl = learning()
         board.lookup.init()
 
-        tdl.add_feature(pattern([0, 1, 2, 3, 4, 5]))
-        tdl.add_feature(pattern([4, 5, 6, 7, 8, 9]))
-        tdl.add_feature(pattern([0, 1, 2, 4, 5, 6]))
-        tdl.add_feature(pattern([4, 5, 6, 8, 9, 10]))
+        # tdl.add_feature(pattern([0, 1, 2, 3, 4, 5]))
+        # tdl.add_feature(pattern([4, 5, 6, 7, 8, 9]))
+        # tdl.add_feature(pattern([0, 1, 2, 4, 5, 6]))
+        # tdl.add_feature(pattern([4, 5, 6, 8, 9, 10]))
 
-        tdl.load("2048.bin")
+        tdl.add_feature(pattern([ 0, 1, 2, 4, 5, 6 ]))
+        tdl.add_feature(pattern([ 0, 1, 2, 3, 4, 5 ]))
+        tdl.add_feature(pattern([ 4, 5, 6, 7, 8, 9 ]))
+        tdl.add_feature(pattern([ 0, 1, 5, 6, 7, 10 ]))
+        tdl.add_feature(pattern([ 0, 1, 2, 5, 9, 10 ]))
+        tdl.add_feature(pattern([ 0, 1, 5, 9, 13, 14 ]))
+        tdl.add_feature(pattern([ 0, 1, 5, 8, 9, 13 ]))
+        tdl.add_feature(pattern([ 0, 1, 2, 4, 6, 10 ]))
+
+        tdl.load("2048_8x6.bin")
 
 def get_tdl_action(state):
     bitboard_state = numpy_to_bitboard(state)
@@ -51,7 +60,7 @@ def calculate_ucb1(total_reward, visits, parent_visits, constant):
     if visits == 0:
         return np.inf
     # return (total_reward / visits - score) + (mean_reward - score) * np.sqrt(np.log(parent_visits) / visits / 2.0)
-    return np.log(total_reward / visits) + constant * np.sqrt(np.log(parent_visits) / visits)
+    return np.log10(total_reward / visits) + constant * np.sqrt(np.log(parent_visits) / visits)
 
 @njit
 def calculate_untried_tiles(board, max_samples=32):
@@ -159,29 +168,6 @@ class TD_MCTS:
         if node.env.is_game_over():
             return node
 
-        if isinstance(node, ChanceNode):
-            assert(len(node.children) + len(node.untried_actions) == len(get_legal_moves(node.env.board, node.env.score)))
-            if node.untried_actions:
-                values = []
-                for a in node.untried_actions:
-                    temp_env = self.create_env_from_state(node.env.board, node.env.score)
-                    temp_env.step(a, True)
-                    values.append(temp_env.score + tdl_estimate(temp_env.board))
-                action = node.untried_actions[np.argmax(values)]
-                # action = random.choice(node.untried_actions)
-                # action = node.untried_actions[0]
-                node.untried_actions.remove(action)
-                new_node = AfterstateNode(node.env.board, node.env.score, node, action, self.max_samples)
-                new_node.env.step(action, True)
-                new_node.calculate_untried_random_tiles()
-                node.children[action] = new_node
-                node = new_node
-                if not node.untried_random_tiles and not node.children:
-                    new_node = ChanceNode(node.env.board, node.env.score, node, 0)
-                    node.children[0] = new_node
-                    new_node.calculate_untried_actions()
-                    node = new_node
-
         if isinstance(node, AfterstateNode):
             # return node
             if node.untried_random_tiles:
@@ -209,6 +195,30 @@ class TD_MCTS:
                 node.children[tile] = new_node
                 new_node.calculate_untried_actions()
                 node = new_node
+
+        if isinstance(node, ChanceNode):
+            # assert(len(node.children) + len(node.untried_actions) == len(get_legal_moves(node.env.board, node.env.score)))
+            if node.untried_actions:
+                values = []
+                for a in node.untried_actions:
+                    temp_env = self.create_env_from_state(node.env.board, node.env.score)
+                    temp_env.step(a, True)
+                    values.append(temp_env.score + tdl_estimate(temp_env.board))
+                action = node.untried_actions[np.argmax(values)]
+                # action = random.choice(node.untried_actions)
+                # action = node.untried_actions[0]
+                node.untried_actions.remove(action)
+                new_node = AfterstateNode(node.env.board, node.env.score, node, action, self.max_samples)
+                new_node.env.step(action, True)
+                new_node.calculate_untried_random_tiles()
+                node.children[action] = new_node
+                node = new_node
+                if not node.untried_random_tiles and not node.children:
+                    new_node = ChanceNode(node.env.board, node.env.score, node, 0)
+                    node.children[0] = new_node
+                    new_node.calculate_untried_actions()
+                    node = new_node
+
         return node
 
     def traverse(self, node):
@@ -224,7 +234,7 @@ class TD_MCTS:
         if is_afterstate and not sim_env.is_game_over():
             sim_env.add_random_tile()
         for _ in range(depth):
-            legal_actions = get_legal_moves(sim_env.board, sim_env.score)
+            legal_actions = sim_env.legal_moves()
             if not legal_actions:
                 break
             a = random.choice(legal_actions)
@@ -254,19 +264,17 @@ class TD_MCTS:
         return max(root.children.items(), key=lambda child: child[1].total_reward / child[1].visits)
 
 root = None
-td_mcts = TD_MCTS(iterations=1000, rollout_depth=2, constant=np.sqrt(2))
+td_mcts = TD_MCTS(iterations=10000, rollout_depth=0, constant=np.sqrt(2))
 
 def get_action(state, score):
     init_model()
-
-    legal_moves = get_legal_moves(state, score)
 
     global root
     if root is None:
         root = ChanceNode(state, score)
         root.calculate_untried_actions()
     else:
-        assert(isinstance(root, AfterstateNode))
+        # assert(isinstance(root, AfterstateNode))
         find = False
         for c in root.children.values():
             if score == c.env.score and np.array_equal(state, c.env.board):
@@ -277,16 +285,17 @@ def get_action(state, score):
         if not find:
             root = ChanceNode(state, score)
             root.calculate_untried_actions()
-    assert(isinstance(root, ChanceNode))
+    # assert(isinstance(root, ChanceNode))
 
-    # for _ in range(len(legal_moves)):
-    for _ in range(td_mcts.iterations):
+    legal_moves = get_legal_moves(state, score)
+    for _ in range(len(legal_moves)):
+    # for _ in range(td_mcts.iterations):
         td_mcts.run_simulation(root)
 
     best_act, s = td_mcts.best_action_distribution(root)
 
-    assert(len(root.untried_actions) == 0)
-    assert(len(root.children) == len(legal_moves))
+    # assert(len(root.untried_actions) == 0)
+    # assert(len(root.children) == len(legal_moves))
 
     values = []
     for a in legal_moves:
@@ -302,13 +311,18 @@ def get_action(state, score):
         visits.append((a, c.visits))
     children.sort()
     visits.sort()
+    # values = np.array(values)
+    # for i in range(len(legal_moves)):
+    #     values[i] += children[i][1]
+    # best_act = legal_moves[np.argmax(values)]
 
     t = '\t' if len(root.children) < 4 else ''
+    tt = '\t' if len(root.children) < 3 else ''
     # print(f"{best_act}, {int(s.total_reward / s.visits)}, {[int(c.visits) for c in root.children.values()]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(c.total_reward / c.visits) for c in root.children.values()]}")
-    print(f"{[int(v) for _, v in visits]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(v) for _, v in children]}\t{t}{[int(v) for v in values]}")
+    print(f"{[int(v) for _, v in visits]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(v) for _, v in children]}\t{t}{tt}{[int(v) for v in values]}")
 
     root = root.children[best_act]
-    assert(isinstance(root, AfterstateNode))
+    # assert(isinstance(root, AfterstateNode))
 
     return best_act
 
@@ -317,8 +331,20 @@ if __name__ == "__main__":
     env.reset()
     done = False
     while not done:
-        if not env.legal_moves():
+        legal_moves = env.legal_moves()
+        if not legal_moves:
             break
-        action = get_action(env.board)
+        # action = get_action(env.board, env.score)
+        # action = get_tdl_action(env.board)
+        legal_moves = filter_moves_keep_max_in_corner(env.board, legal_moves)
+        values = []
+        for a in legal_moves:
+            temp_env = Game2048Env()
+            temp_env.board = env.board.copy()
+            temp_env.score = env.score
+            temp_env.step(a, True)
+            values.append(temp_env.score + tdl_estimate(temp_env.board))
+        action = legal_moves[np.argmax(values)]
         _, _, done, _ = env.step(action)
+    # env.render()
     print(f"Game Over! Final Score: {env.score}")
