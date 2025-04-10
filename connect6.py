@@ -5,11 +5,49 @@ from numba import njit
 import copy
 from operator import itemgetter
 
+DEBUG = True
+
 def my_excepthook(exctype, value, traceback):
     sys.stderr.write(f"未處理的異常: {value}\n")
     sys.__excepthook__(exctype, value, traceback)  # 保留原始異常處理
 
 sys.excepthook = my_excepthook
+
+@njit
+def check_move_win(board: np.ndarray, size: int, color: int, can_move: int):
+    directions = np.array([[0, 1], [1, 0], [1, 1], [1, -1]], dtype=np.int32)
+
+    # 初始化結果陣列，預設為無效位置 (-1, -1)
+    result = np.full((can_move, 2), -1, dtype=np.int32)
+
+    for i in range(size):
+        for j in range(size):
+            for direction in directions:
+                di, dj = direction[0], direction[1]
+                if can_fit_window(i, j, di, dj, size):
+                    count = 0
+                    empty_count = 0
+                    # 臨時儲存空格位置，最多儲存 can_move 個
+                    temp_empty = np.zeros((can_move, 2), dtype=np.int32)
+
+                    for k in range(6):
+                        r, c = i + k * di, j + k * dj
+                        w = board[r, c]
+                        if w == color:
+                            count += 1
+                        elif w == 0 and empty_count < can_move:
+                            temp_empty[empty_count, 0] = r
+                            temp_empty[empty_count, 1] = c
+                            empty_count += 1
+
+                    # 如果已有棋子數量加上可下棋子數量正好為6
+                    if count == 6 - can_move and empty_count == can_move:
+                        for m in range(can_move):
+                            result[m, 0] = temp_empty[m, 0]
+                            result[m, 1] = temp_empty[m, 1]
+                        return result
+
+    return result
 
 @njit
 def evaluate_board(board: np.ndarray, size: int, color: int) -> tuple:
@@ -263,55 +301,8 @@ def _check_win(board, size):
     return 0
 
 @njit
-def winning_move(board: np.ndarray, piece: int) -> bool:
-    """
-    檢查是否有6連勝的情況
-    board: 二維NumPy陣列表示棋盤 (1為黑子，2為白子，0為空格)
-    piece: 要檢查的棋子 (1 或 2)
-    返回: True表示該棋子獲勝，False表示未獲勝
-    """
-    WINDOW_LENGTH = 6
-    rows, cols = board.shape[0], board.shape[1]
-
-    # 檢查水平方向
-    for r in range(rows):
-        for c in range(cols - WINDOW_LENGTH + 1):
-            window = board[r, c:c + WINDOW_LENGTH]
-            if np.all(window == piece):
-                return True
-
-    # 檢查垂直方向
-    for c in range(cols):
-        for r in range(rows - WINDOW_LENGTH + 1):
-            window = board[r:r + WINDOW_LENGTH, c]
-            if np.all(window == piece):
-                return True
-
-    # 檢查正斜線 (左上到右下)
-    for r in range(rows - WINDOW_LENGTH + 1):
-        for c in range(cols - WINDOW_LENGTH + 1):
-            # 提取對角線元素
-            diagonal = np.zeros(WINDOW_LENGTH, dtype=np.int8)
-            for i in range(WINDOW_LENGTH):
-                diagonal[i] = board[r + i, c + i]
-            if np.all(diagonal == piece):
-                return True
-
-    # 檢查負斜線 (右上到左下)
-    for r in range(WINDOW_LENGTH - 1, rows):
-        for c in range(cols - WINDOW_LENGTH + 1):
-            # 提取對角線元素
-            diagonal = np.zeros(WINDOW_LENGTH, dtype=np.int8)
-            for i in range(WINDOW_LENGTH):
-                diagonal[i] = board[r - i, c + i]
-            if np.all(diagonal == piece):
-                return True
-
-    return False
-
-@njit
 def minimax(board: np.ndarray, size: int, depth: int, alpha: float, beta: float,
-            maximizingPlayer: bool, maximizingColor: int) -> tuple:
+            maximizingPlayer: bool, maximizingColor: int, only_one_move: bool) -> tuple:
     """
     Minimax演算法，帶Alpha-Beta剪枝，用於6子棋
     board: 二維NumPy陣列表示棋盤
@@ -323,7 +314,7 @@ def minimax(board: np.ndarray, size: int, depth: int, alpha: float, beta: float,
     返回: (action, value)，action是(row, col)或(-1, -1)表示無動作
     """
     # 獲取有效位置
-    valid_locations = _nearby_availables(size, board)
+    valid_locations = _nearby_availables(size, board, 1)
     n_valid = len(valid_locations)
 
     # 檢查終止條件
@@ -353,7 +344,7 @@ def minimax(board: np.ndarray, size: int, depth: int, alpha: float, beta: float,
             row, col = valid_locations[i]
             b_copy = board.copy()
             b_copy[row, col] = maximizingColor
-            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, False, maximizingColor)
+            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, not only_one_move, maximizingColor, not only_one_move)
             if new_score > value:
                 value = new_score
                 action = (row, col)
@@ -372,7 +363,7 @@ def minimax(board: np.ndarray, size: int, depth: int, alpha: float, beta: float,
             row, col = valid_locations[i]
             b_copy = board.copy()
             b_copy[row, col] = 3 - maximizingColor
-            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, True, maximizingColor)
+            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, only_one_move, maximizingColor, not only_one_move)
             if new_score < value:
                 value = new_score
                 action = (row, col)
@@ -613,7 +604,7 @@ class MCTSNode:
         return self.parent is None
 
 class MCTS:
-    def __init__(self, c_puct=5, n_playout=2000):
+    def __init__(self, c_puct=5, n_playout=1500):
         self.root = MCTSNode(None, 1.0)
         self.c_puct = c_puct
         self.n_playout = n_playout
@@ -631,12 +622,21 @@ class MCTS:
 
         # expand
         nearby_availables, action_probs = rollout_policy_func(state, 0.05)
+        # acts = check_move_win(state.board, state.size, state.turn, 2 - state.turn_moves if state.move_count != 0 else 1)
+        # # print(acts, file=sys.stderr)
+        # if not np.all(acts == -1):
+        #     nearby_availables = []
+        #     for a in acts:
+        #         print(a, file=sys.stderr)
+        #         if a[0] != -1:
+        #             nearby_availables.append((a[0], a[1]))
+        #             # print(nearby_availables, file=sys.stderr)
+        #     action_probs = np.ones(len(nearby_availables)) / len(nearby_availables)
         end, winner = state.game_end()
         if not end:
             node.expand(nearby_availables, action_probs)
             action, node = node.select_child(self.c_puct)
             state.do_move(action)
-
         # print("expand", file=sys.stderr)
 
         # rollout
@@ -652,20 +652,37 @@ class MCTS:
 
         # print("backpropagation", file=sys.stderr)
 
-    def rollout(self, state: Board, limit=20):
-        player = state.turn
-        for i in range(limit):
-            end, winner = state.game_end()
-            if end:
-                break
+    def rollout(self, state: Board, limit=10):
 
-            empty_positions = state.availables()
-            for r, c in empty_positions:
-                state.board[r, c] = state.turn
-                if state.check_win() == state.turn:
-                    state.board[r, c] = 0
-                    state.do_move((r, c))
-                state.board[r, c] = 0
+        player = state.turn
+        # _, value = minimax(state.board, state.size, 4, -np.inf, np.inf, True, player, state.turn_moves == 1 or state.move_count == 0)
+        # if value > 0:
+        #     return 1
+        # elif value < 0:
+        #     return -1
+        # return 0
+        end, winner = state.game_end()
+        if end:
+            if winner == 0:  # Tie
+                return 0
+            return 1 if winner == player else -1
+
+        for i in range(limit):
+
+            acts = check_move_win(state.board, state.size, state.turn, 2 - state.turn_moves if state.move_count != 0 else 1)
+            if not np.all(acts == -1):
+                for a in acts:
+                    if a[0] != -1:
+                        state.do_move(a)
+                end, winner = state.game_end()
+                break
+            # empty_positions = state.availables()
+            # for r, c in empty_positions:
+            #     state.board[r, c] = state.turn
+            #     if state.check_win() == state.turn:
+            #         state.board[r, c] = 0
+            #         state.do_move((r, c))
+            #     state.board[r, c] = 0
 
             nearby_availables, probs = rollout_policy_func(state, 0.01, 2)
             # action = max(action_probs, key=itemgetter(1))[0]
@@ -674,6 +691,10 @@ class MCTS:
             # action = get_rule_base_action(state, nearby_availables)
             # print(f"{action}", file=sys.stderr)
             state.do_move(action)
+
+            end, winner = state.game_end()
+            if end:
+                break
         else:
         #     print("WARNING: rollout reached move limit", file=sys.stderr)
             # print("evaluate_board", file=sys.stderr)
@@ -702,9 +723,13 @@ class MCTS:
 
     def get_move(self, state: Board):
         for n in range(self.n_playout):
+            # print(n, file=sys.stderr)
+            # if n > 1 and n >= len(self.root.children) - 1:
+            #     break
             if len(self.root.children) == 1:
                 _max = max(self.root.children.items(), key=lambda c: c[1].visits)
-                print(f"{_max[0]}", file=sys.stderr)
+                if DEBUG:
+                    print(f"{_max[0]}", file=sys.stderr)
                 return _max[0]
             # state_copy = Board(state.size)
             # state_copy.size = state.size
@@ -720,7 +745,8 @@ class MCTS:
             self.playout(state_copy)
         _max = max(self.root.children.items(), key=lambda c: c[1].visits)
         _min = min(self.root.children.values(), key=lambda c: c.visits)
-        print(f"{_max[1].visits}, {_min.visits}", file=sys.stderr)
+        if DEBUG:
+            print(f"{_max[1].visits}, {_min.visits}", file=sys.stderr)
         if _max[1].visits - _min.visits <= 1:
             return random.choice(list(self.root.children.keys()))
         return _max[0]
@@ -743,7 +769,7 @@ class Connect6Game:
         self.last_opponent_move = None
         self.move_count = 0
         self.turn_moves = 0
-        self.mcts = MCTS(1.41, 1000)
+        self.mcts = MCTS(1.41)
 
     def reset_board(self):
         """Resets the board and game state."""
@@ -752,7 +778,7 @@ class Connect6Game:
         self.game_over = False
         self.move_count = 0
         self.turn_moves = 0
-        self.mcts = MCTS(1.41, 1000)
+        self.mcts = MCTS(1.41)
         print("= ", flush=True)
 
     def set_board_size(self, size):
@@ -763,7 +789,7 @@ class Connect6Game:
         self.game_over = False
         self.move_count = 0
         self.turn_moves = 0
-        self.mcts = MCTS(1.41, 1000)
+        self.mcts = MCTS(1.41)
         print("= ", flush=True)
 
     def availables(self):
@@ -840,19 +866,20 @@ class Connect6Game:
                 self.turn = 3 - self.turn
                 self.turn_moves = 0
 
-        # print("evaluate_board", file=sys.stderr)
-        black_score, white_score = evaluate_board(self.board, self.size, 1)
-        print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
+        if DEBUG:
+            # print("evaluate_board", file=sys.stderr)
+            black_score, white_score = evaluate_board(self.board, self.size, 1)
+            print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
 
-        black_score = 0
-        white_score = 0
-        empty_positions = self.nearby_availables()
-        # print(empty_positions, file=sys.stderr)
-        for r, c in empty_positions:
-            black_score += self.evaluate_position(r, c, 1)
-            white_score += self.evaluate_position(r, c, 2)
-        print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
-        print("------", file=sys.stderr)
+            black_score = 0
+            white_score = 0
+            empty_positions = self.nearby_availables()
+            # print(empty_positions, file=sys.stderr)
+            for r, c in empty_positions:
+                black_score += self.evaluate_position(r, c, 1)
+                white_score += self.evaluate_position(r, c, 2)
+            print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
+            print("------", file=sys.stderr)
 
         # self.turn = 3 - self.turn
         print('= ', end='', flush=True)
@@ -879,7 +906,7 @@ class Connect6Game:
                 # 四捨五入到整數並檢查是否在棋盤範圍內
                 x_int = int(np.round(x))
                 y_int = int(np.round(y))
-                print(x_int, y_int, file=sys.stderr)
+                # print(x_int, y_int, file=sys.stderr)
 
                 if 0 <= x_int < self.size and 0 <= y_int < self.size:
                     move = (x_int, y_int)
@@ -888,7 +915,8 @@ class Connect6Game:
             # move = np.random.choice([(r, c) for r in range(self.size) for c in range(self.size)], p=center_weight.ravel())
             r, c = move
             move_str = f"{self.index_to_label(c)}{r+1}"
-            print(move, file=sys.stderr)
+            if DEBUG:
+                print(move, file=sys.stderr)
             self.play_move(color, move_str)
             print(move_str, flush=True)
             return
@@ -902,20 +930,21 @@ class Connect6Game:
                 self.board[r, c] = 0
                 move_str = f"{self.index_to_label(c)}{r+1}"
                 self.play_move(color, move_str)
-                print(f"Rule 1, {move_str}", file=sys.stderr)
+                if DEBUG:
+                    print(f"Win, {move_str}", file=sys.stderr)
                 print(move_str, flush=True)
                 return
             self.board[r, c] = 0
 
-        print("Minimax", file=sys.stderr)
-        action, value = minimax(self.board, self.size, 2, -np.inf, np.inf, True, my_color)
-        print(f"Minimax: {action}, {value}", file=sys.stderr)
-        r, c = action
-        move_str = f"{self.index_to_label(c)}{r+1}"
-        print(f"move={move_str}, size={self.size}, {self.game_over}", file=sys.stderr)
-        self.play_move(color, move_str)
-        print(move_str, flush=True)
-        return
+        # print("Minimax", file=sys.stderr)
+        # action, value = minimax(self.board, self.size, 2, -np.inf, np.inf, True, my_color, self.turn_moves == 1 or self.move_count == 0)
+        # print(f"Minimax: {action}, {value}", file=sys.stderr)
+        # r, c = action
+        # move_str = f"{self.index_to_label(c)}{r+1}"
+        # print(f"move={move_str}, size={self.size}, {self.game_over}", file=sys.stderr)
+        # self.play_move(color, move_str)
+        # print(move_str, flush=True)
+        # return
 
         # expected_moves = 1 if self.move_count == 0 and color.upper() == 'B' else 2
         # if self.turn_moves >= expected_moves:
@@ -946,15 +975,17 @@ class Connect6Game:
 
         move = self.mcts.get_move(b)
         near, prob = rollout_policy_func(b, 0.05)
-        print([c.visits for c in self.mcts.root.children.values()], file=sys.stderr)
-        for a, c in self.mcts.root.children.items():
-            move_str = f"{self.index_to_label(a[1])}{a[0]+1}"
-            p = 0
-            for i in range(len(near)):
-                if near[i] == a:
-                    p = prob[i]
-                    break
-            print(f"{move_str}, {c.visits}, {p}", file=sys.stderr)
+        if DEBUG:
+            print([c.visits for c in self.mcts.root.children.values()], file=sys.stderr)
+            # print([c.Q for c in self.mcts.root.children.values()], file=sys.stderr)
+            for a, c in self.mcts.root.children.items():
+                move_str = f"{self.index_to_label(a[1])}{a[0]+1}"
+                p = 0
+                for i in range(len(near)):
+                    if near[i] == a:
+                        p = prob[i]
+                        break
+                print(f"{move_str}, {c.visits}, {p} {c.Q}", file=sys.stderr)
 
         # mcts.update_with_move(move)
         if move:
