@@ -114,15 +114,15 @@ def analyze_pattern(window: np.ndarray, player: int, score_array: np.ndarray) ->
         if max_consecutive > 1:
             score += open_ends * max_consecutive
 
-        score += score_array[max_consecutive]
-        if player_count == 2 and empty_count == 4 and max_consecutive == 1:
-            score += score_array[2]
-        if player_count == 3 and empty_count == 3:
-            score += score_array[3] * 0.8
-        if player_count == 4 and empty_count == 2:
-            score += score_array[4] * 0.8
-        if player_count == 5 and empty_count == 1:
-            score += score_array[5] * 0.8
+        score += score_array[player_count]
+        # if player_count == 2 and empty_count == 4 and max_consecutive == 1:
+        #     score += score_array[2]
+        # if player_count == 3 and empty_count == 3:
+        #     score += score_array[3] * 0.8
+        # if player_count == 4 and empty_count == 2:
+        #     score += score_array[4] * 0.8
+        # if player_count == 5 and empty_count == 1:
+        #     score += score_array[5] * 0.8
 
     return score
 
@@ -261,6 +261,125 @@ def _check_win(board, size):
                     if count >= 6:
                         return current_color
     return 0
+
+@njit
+def winning_move(board: np.ndarray, piece: int) -> bool:
+    """
+    檢查是否有6連勝的情況
+    board: 二維NumPy陣列表示棋盤 (1為黑子，2為白子，0為空格)
+    piece: 要檢查的棋子 (1 或 2)
+    返回: True表示該棋子獲勝，False表示未獲勝
+    """
+    WINDOW_LENGTH = 6
+    rows, cols = board.shape[0], board.shape[1]
+
+    # 檢查水平方向
+    for r in range(rows):
+        for c in range(cols - WINDOW_LENGTH + 1):
+            window = board[r, c:c + WINDOW_LENGTH]
+            if np.all(window == piece):
+                return True
+
+    # 檢查垂直方向
+    for c in range(cols):
+        for r in range(rows - WINDOW_LENGTH + 1):
+            window = board[r:r + WINDOW_LENGTH, c]
+            if np.all(window == piece):
+                return True
+
+    # 檢查正斜線 (左上到右下)
+    for r in range(rows - WINDOW_LENGTH + 1):
+        for c in range(cols - WINDOW_LENGTH + 1):
+            # 提取對角線元素
+            diagonal = np.zeros(WINDOW_LENGTH, dtype=np.int8)
+            for i in range(WINDOW_LENGTH):
+                diagonal[i] = board[r + i, c + i]
+            if np.all(diagonal == piece):
+                return True
+
+    # 檢查負斜線 (右上到左下)
+    for r in range(WINDOW_LENGTH - 1, rows):
+        for c in range(cols - WINDOW_LENGTH + 1):
+            # 提取對角線元素
+            diagonal = np.zeros(WINDOW_LENGTH, dtype=np.int8)
+            for i in range(WINDOW_LENGTH):
+                diagonal[i] = board[r - i, c + i]
+            if np.all(diagonal == piece):
+                return True
+
+    return False
+
+@njit
+def minimax(board: np.ndarray, size: int, depth: int, alpha: float, beta: float,
+            maximizingPlayer: bool, maximizingColor: int) -> tuple:
+    """
+    Minimax演算法，帶Alpha-Beta剪枝，用於6子棋
+    board: 二維NumPy陣列表示棋盤
+    size: 棋盤大小
+    depth: 搜尋深度
+    alpha, beta: Alpha-Beta剪枝參數
+    maximizingPlayer: 是否為最大化玩家
+    maximizingColor: 最大化玩家的棋子 (1 或 2)
+    返回: (action, value)，action是(row, col)或(-1, -1)表示無動作
+    """
+    # 獲取有效位置
+    valid_locations = _nearby_availables(size, board)
+    n_valid = len(valid_locations)
+
+    # 檢查終止條件
+    winner = _check_win(board, size)
+    is_terminal = winner != 0 or n_valid == 0
+
+    if depth == 0 or is_terminal:
+        if is_terminal:
+            if winner == maximizingColor:
+                return (-1, -1), 100000000
+            elif winner == 3 - maximizingColor:
+                return (-1, -1), -100000000
+            else:  # 平局
+                return (-1, -1), 0
+        else:  # 深度為0
+            my_score, oppo_score = evaluate_board(board, size, maximizingColor)
+            return (-1, -1), my_score - oppo_score
+
+    if maximizingPlayer:
+        value = -np.inf
+        action = (-1, -1)  # 預設動作
+        if n_valid > 0:
+            # 隨機選擇初始動作（避免random.choice）
+            action = valid_locations[0]
+
+        for i in range(n_valid):
+            row, col = valid_locations[i]
+            b_copy = board.copy()
+            b_copy[row, col] = maximizingColor
+            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, False, maximizingColor)
+            if new_score > value:
+                value = new_score
+                action = (row, col)
+            alpha = max(alpha, value)
+            if alpha >= beta:
+                break
+        return action, value
+
+    else:  # Minimizing player
+        value = np.inf
+        action = (-1, -1)  # 預設動作
+        if n_valid > 0:
+            action = valid_locations[0]
+
+        for i in range(n_valid):
+            row, col = valid_locations[i]
+            b_copy = board.copy()
+            b_copy[row, col] = 3 - maximizingColor
+            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, True, maximizingColor)
+            if new_score < value:
+                value = new_score
+                action = (row, col)
+            beta = min(beta, value)
+            if alpha >= beta:
+                break
+        return action, value
 
 class Board:
     def __init__(self, size=19):
@@ -788,6 +907,16 @@ class Connect6Game:
                 return
             self.board[r, c] = 0
 
+        print("Minimax", file=sys.stderr)
+        action, value = minimax(self.board, self.size, 2, -np.inf, np.inf, True, my_color)
+        print(f"Minimax: {action}, {value}", file=sys.stderr)
+        r, c = action
+        move_str = f"{self.index_to_label(c)}{r+1}"
+        print(f"move={move_str}, size={self.size}, {self.game_over}", file=sys.stderr)
+        self.play_move(color, move_str)
+        print(move_str, flush=True)
+        return
+
         # expected_moves = 1 if self.move_count == 0 and color.upper() == 'B' else 2
         # if self.turn_moves >= expected_moves:
         #     print("? Turn already completed, wait for opponent's move")
@@ -918,6 +1047,16 @@ if __name__ == "__main__":
     # print(game.evaluate_position(15, game.label_to_index("M"), 2), game.evaluate_position(15, game.label_to_index("M"), 1))
     # print(game.evaluate_position(15, game.label_to_index("P"), 2), game.evaluate_position(15, game.label_to_index("P"), 1))
     # print(game.evaluate_position(15, game.label_to_index("Q"), 2), game.evaluate_position(15, game.label_to_index("Q"), 1))
+    # game.show_board()
+    # game.generate_move('B')
+    # game.show_board()
+    # game.generate_move('W')
+    # game.show_board()
+    # game.generate_move('W')
+    # game.show_board()
+    # game.generate_move('B')
+    # game.show_board()
+    # game.generate_move('B')
     # game.show_board()
 
     game.run()
