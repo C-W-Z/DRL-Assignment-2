@@ -12,6 +12,121 @@ def my_excepthook(exctype, value, traceback):
 sys.excepthook = my_excepthook
 
 @njit
+def evaluate_board(board: np.ndarray, size: int, color: int) -> tuple:
+    """
+    評估6子棋盤面，1為黑子，2為白子，0為空格
+    board: 二維NumPy陣列表示棋盤
+    size: 棋盤大小
+    color: 當前玩家 (1 或 2)
+    返回: (己方分數, 對方分數)
+    """
+    # 分數表轉為陣列 (索引對應連子數量)
+    score_array = np.array([0, 1, 50, 500, 5000, 10000, 1000000], dtype=np.int64)
+
+    opponent = 3 - color
+    my_score = 0
+    oppo_score = 0
+
+    # 中心位置權重 (預先計算為NumPy陣列)
+    # center_weight = np.zeros((size, size), dtype=np.int32)
+    # for i in range(size):
+    #     for j in range(size):
+    #         center_weight[i, j] =min(i, size-1-i) + min(j, size-1-j) + 1
+
+    # 方向陣列
+    directions = np.array([[0, 1], [1, 0], [1, 1], [1, -1]], dtype=np.int32)
+
+    for i in range(size):
+        for j in range(size):
+            # 添加中心位置分數
+            # if board[i, j] == color:
+            #     my_score += center_weight[i, j]
+            # elif board[i, j] == opponent:
+            #     oppo_score += center_weight[i, j]
+
+            # print(f"evaluate {i}, {j}", file=sys.stderr)
+
+            # 檢查每個方向的6格窗口
+            for direction in directions:
+                di, dj = direction[0], direction[1]
+                if can_fit_window(i, j, di, dj, size):
+                    window = get_window(board, i, j, di, dj, size)
+                    my_score += analyze_pattern(window, color, score_array)
+                    oppo_score += analyze_pattern(window, opponent, score_array)
+
+    return my_score, oppo_score
+
+@njit
+def can_fit_window(i: int, j: int, di: int, dj: int, size: int, length: int = 6) -> bool:
+    """檢查是否能在該方向放入6格窗口"""
+    ni, nj = i + di * (length - 1), j + dj * (length - 1)
+    return 0 <= ni < size and 0 <= nj < size
+
+@njit
+def get_window(board: np.ndarray, i: int, j: int, di: int, dj: int, size: int) -> np.ndarray:
+    """獲取指定方向的6格窗口"""
+    window = np.zeros(6, dtype=np.int8)
+    for k in range(6):
+        window[k] = board[i + k * di, j + k * dj]
+    return window
+
+@njit
+def analyze_pattern(window: np.ndarray, player: int, score_array: np.ndarray) -> int:
+    """
+    分析6格窗口的模式，包括連子、開放端和潛在威脅
+    """
+    score = 0
+    opponent = 3 - player
+
+    # 計算連續棋子數量和相關特徵
+    max_consecutive = 0
+    current_consecutive = 0
+    open_ends = 0
+    player_count = 0
+    empty_count = 0
+    opponent_count = 0
+
+    # 檢查窗口前的空格
+    if window[0] == 0:
+        open_ends += 1
+
+    # 分析窗口
+    for i in range(6):
+        if window[i] == player:
+            current_consecutive += 1
+            max_consecutive = max(max_consecutive, current_consecutive)
+            player_count += 1
+        elif window[i] == opponent:
+            current_consecutive = 0
+            opponent_count += 1
+        else:  # 空格
+            if current_consecutive > 0 and i < 5 and window[i + 1] == player:
+                open_ends += 1
+            current_consecutive = 0
+            empty_count += 1
+
+    # 檢查窗口後的開放端
+    if window[-1] == player and current_consecutive > 0:
+        open_ends += 1
+
+    if opponent_count == 0:
+
+        if max_consecutive > 1:
+            score += open_ends * max_consecutive
+
+        score += score_array[max_consecutive]
+        if player_count == 2 and empty_count == 4 and max_consecutive == 1:
+            score += score_array[2]
+        if player_count == 3 and empty_count == 3:
+            score += score_array[3] * 0.8
+        if player_count == 4 and empty_count == 2:
+            score += score_array[4] * 0.8
+        if player_count == 5 and empty_count == 1:
+            score += score_array[5] * 0.8
+
+    return score
+
+@njit
 def _evaluate_position(board, size, r, c, color):
     directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
     score = 5
@@ -75,16 +190,19 @@ def _evaluate_position(board, size, r, c, color):
 
         if not can_reach_six:
             continue
+
+        s = 0
         if count >= 6:
-            score += 10000
+            s += 10000
         elif count == 5:
-            score += 1000
+            s += 1000
         elif count == 4:
-            score += 500
+            s += 500
         elif count == 3:
-            score += 200
+            s += 200
         elif count == 2:
-            score += 50
+            s += 50
+        score += s
 
     return score
 
@@ -244,9 +362,9 @@ class Board:
 #     action_probs = np.ones(len(nearby_availables)) / len(nearby_availables)
 #     return nearby_availables, action_probs
 
-def rollout_policy_func(game: Board):
+def rollout_policy_func(game: Board, threshold_rate = 0, max_dist=2):
     """基於 evaluate_position 的啟發式 rollout 策略"""
-    nearby_availables = game.nearby_availables()
+    nearby_availables = game.nearby_availables(max_dist)
     if not nearby_availables:
         nearby_availables = game.availables()
         if not nearby_availables:
@@ -260,13 +378,27 @@ def rollout_policy_func(game: Board):
     # 將分數轉換為概率（簡單正規化）
     scores = np.array(scores)
     if scores.max() == 0:  # 如果所有分數為 0，均勻分佈
-        probs = np.ones(len(nearby_availables)) / len(nearby_availables)
+        probs = np.ones(len(_nearby_availables)) / len(_nearby_availables)
     else:
         # softmax
         scores = np.exp(scores / 100)
-        probs = (scores) / scores.sum()
+        # probs = (scores) / scores.sum()
 
-    return nearby_availables, probs
+    threshold_prob = max(scores) * threshold_rate
+    _nearby_availables = []
+    _scores = []
+    total_score = 0.0
+    for action, score in zip(nearby_availables, scores):
+        if score < threshold_prob:
+            continue
+        _nearby_availables.append(action)
+        _scores.append(score)
+        total_score += score
+
+    _scores = np.array(_scores)
+    probs = (_scores) / _scores.sum()
+
+    return _nearby_availables, probs
 
 # def rollout_policy_func(game: Board, nearby_availables):
 #     """模拟神经网络随机生成各个节点的胜率P"""
@@ -333,15 +465,12 @@ class MCTSNode:
         self.children = {}
         self.visits = 0
         self.Q = 0
-        self.P = prob # 從上一Node走到這一Node的機率
+        # self.P = prob # 從上一Node走到這一Node的機率
+        self.P = 1.0
         self.untried_actions = []
 
     def expand(self, nearby_availables, action_probs):
-        max_prob = max(action_probs)
         for action, prob in zip(nearby_availables, action_probs):
-            # if prob < 1e-4:
-            if prob < max_prob * 0.1:
-                continue
             if action not in self.children:
                 self.children[action] = MCTSNode(self, prob)
 
@@ -382,7 +511,7 @@ class MCTS:
         # print("select", file=sys.stderr)
 
         # expand
-        nearby_availables, action_probs = rollout_policy_func(state)
+        nearby_availables, action_probs = rollout_policy_func(state, 0.05)
         end, winner = state.game_end()
         if not end:
             node.expand(nearby_availables, action_probs)
@@ -404,7 +533,7 @@ class MCTS:
 
         # print("backpropagation", file=sys.stderr)
 
-    def rollout(self, state: Board, limit=30):
+    def rollout(self, state: Board, limit=20):
         player = state.turn
         for i in range(limit):
             end, winner = state.game_end()
@@ -419,7 +548,7 @@ class MCTS:
                     state.do_move((r, c))
                 state.board[r, c] = 0
 
-            nearby_availables, probs = rollout_policy_func(state)
+            nearby_availables, probs = rollout_policy_func(state, 0.01, 2)
             # action = max(action_probs, key=itemgetter(1))[0]
             action = np.random.choice(len(nearby_availables), p=probs.ravel())
             action = nearby_availables[action]
@@ -428,14 +557,23 @@ class MCTS:
             state.do_move(action)
         else:
         #     print("WARNING: rollout reached move limit", file=sys.stderr)
+            # print("evaluate_board", file=sys.stderr)
+            my_score, oppo_score = evaluate_board(state.board, state.size, player)
+            # print("evaluate_board end", file=sys.stderr)
+            # if my_score > oppo_score:
+            #     return 1
+            # elif my_score < oppo_score:
+            #     return -1
+            # else:
+            #     return 0
             score = 0
             empty_positions = state.nearby_availables()
             for r, c in empty_positions:
                 score += state.evaluate_position(r, c, player)
-                score += state.evaluate_position(r, c, 3 - player)
-            if score > 0:
+                score -= state.evaluate_position(r, c, 3 - player)
+            if score > 0 and my_score > oppo_score:
                 return 1
-            elif score < 0:
+            elif score < 0 and my_score < oppo_score:
                 return -1
             return 0  # 如果達到限制，返回平局
         # print(f"winner: {winner}, {state.game_over}", file=sys.stderr)
@@ -446,7 +584,9 @@ class MCTS:
     def get_move(self, state: Board):
         for n in range(self.n_playout):
             if len(self.root.children) == 1:
-                return self.root.children.keys()[0]
+                _max = max(self.root.children.items(), key=lambda c: c[1].visits)
+                print(f"{_max[0]}", file=sys.stderr)
+                return _max[0]
             # state_copy = Board(state.size)
             # state_copy.size = state.size
             # state_copy.board = state.board
@@ -484,7 +624,7 @@ class Connect6Game:
         self.last_opponent_move = None
         self.move_count = 0
         self.turn_moves = 0
-        self.mcts = MCTS(10, 1000)
+        self.mcts = MCTS(1.41, 1000)
 
     def reset_board(self):
         """Resets the board and game state."""
@@ -493,7 +633,7 @@ class Connect6Game:
         self.game_over = False
         self.move_count = 0
         self.turn_moves = 0
-        self.mcts = MCTS(10, 1000)
+        self.mcts = MCTS(1.41, 1000)
         print("= ", flush=True)
 
     def set_board_size(self, size):
@@ -504,7 +644,7 @@ class Connect6Game:
         self.game_over = False
         self.move_count = 0
         self.turn_moves = 0
-        self.mcts = MCTS(10, 1000)
+        self.mcts = MCTS(1.41, 1000)
         print("= ", flush=True)
 
     def availables(self):
@@ -512,6 +652,9 @@ class Connect6Game:
 
     def occupies(self):
         return _occupies(self.size, self.board)
+
+    def nearby_availables(self, max_dist=2):
+        return _nearby_availables(self.size, self.board, max_dist)
 
     def do_move(self, move):
         r, c = move
@@ -578,6 +721,20 @@ class Connect6Game:
                 self.turn = 3 - self.turn
                 self.turn_moves = 0
 
+        # print("evaluate_board", file=sys.stderr)
+        black_score, white_score = evaluate_board(self.board, self.size, 1)
+        print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
+
+        black_score = 0
+        white_score = 0
+        empty_positions = self.nearby_availables()
+        # print(empty_positions, file=sys.stderr)
+        for r, c in empty_positions:
+            black_score += self.evaluate_position(r, c, 1)
+            white_score += self.evaluate_position(r, c, 2)
+        print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
+        print("------", file=sys.stderr)
+
         # self.turn = 3 - self.turn
         print('= ', end='', flush=True)
 
@@ -589,9 +746,30 @@ class Connect6Game:
             return
 
         if self.move_count == 0 and color.upper() == 'B':
-            move = random.choice([(r, c) for r in range(1, self.size - 2) for c in range(1, self.size - 2)])
+            sigma = self.size / 6  # 預設sigma為棋盤大小的1/6，使分佈適中
+
+            # 定義棋盤中心的均值 (mu_x, mu_y)
+            mu = (self.size - 1) / 2  # 中心點，例如size=6時為2.5
+
+            # 使用高斯分布生成座標
+            while True:
+                # 生成兩個獨立的高斯隨機變數
+                x = np.random.normal(loc=mu, scale=sigma)
+                y = np.random.normal(loc=mu, scale=sigma)
+
+                # 四捨五入到整數並檢查是否在棋盤範圍內
+                x_int = int(np.round(x))
+                y_int = int(np.round(y))
+                print(x_int, y_int, file=sys.stderr)
+
+                if 0 <= x_int < self.size and 0 <= y_int < self.size:
+                    move = (x_int, y_int)
+                    break
+
+            # move = np.random.choice([(r, c) for r in range(self.size) for c in range(self.size)], p=center_weight.ravel())
             r, c = move
             move_str = f"{self.index_to_label(c)}{r+1}"
+            print(move, file=sys.stderr)
             self.play_move(color, move_str)
             print(move_str, flush=True)
             return
@@ -638,7 +816,7 @@ class Connect6Game:
         # return
 
         move = self.mcts.get_move(b)
-        near, prob = rollout_policy_func(b)
+        near, prob = rollout_policy_func(b, 0.05)
         print([c.visits for c in self.mcts.root.children.values()], file=sys.stderr)
         for a, c in self.mcts.root.children.items():
             move_str = f"{self.index_to_label(a[1])}{a[0]+1}"
@@ -732,12 +910,14 @@ class Connect6Game:
 if __name__ == "__main__":
     game = Connect6Game()
 
-    # game.board[6, game.label_to_index("P")] = 1
-    # game.board[4, game.label_to_index("N")] = 2
-    # game.board[3, game.label_to_index("O")] = 2
-    # game.board[5, game.label_to_index("Q")] = 2
-    # game.board[6, game.label_to_index("Q")] = 2
-    # print(game.evaluate_position(4, game.label_to_index("P"), 2), game.evaluate_position(4, game.label_to_index("P"), 1))
+    # game.board[15, game.label_to_index("J")] = 1
+    # game.board[15, game.label_to_index("K")] = 2
+    # game.board[15, game.label_to_index("L")] = 2
+    # game.board[15, game.label_to_index("N")] = 2
+    # game.board[15, game.label_to_index("O")] = 2
+    # print(game.evaluate_position(15, game.label_to_index("M"), 2), game.evaluate_position(15, game.label_to_index("M"), 1))
+    # print(game.evaluate_position(15, game.label_to_index("P"), 2), game.evaluate_position(15, game.label_to_index("P"), 1))
+    # print(game.evaluate_position(15, game.label_to_index("Q"), 2), game.evaluate_position(15, game.label_to_index("Q"), 1))
     # game.show_board()
 
     game.run()

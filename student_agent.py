@@ -251,7 +251,9 @@ class TD_MCTS:
             node = self.get_best_child(node)
 
     def rollout(self, is_afterstate: bool, sim_env: Game2048Env, depth):
-        estim = tdl_estimate(sim_env.board)
+        if depth == 0:
+            return sim_env.score + tdl_estimate(sim_env.board)
+        estim = 0
         if is_afterstate and not sim_env.is_game_over():
             sim_env.add_random_tile()
         for _ in range(depth):
