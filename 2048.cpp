@@ -313,7 +313,7 @@ private:
  */
 class feature {
 public:
-	feature(size_t len) : length(len), weight(alloc(len)) {}
+	feature(size_t len, float initial_value = 0.0f) : length(len), weight(alloc(len, initial_value)) {}
 	feature(feature&& f) : length(f.length), weight(f.weight) { f.weight = nullptr; }
 	feature(const feature& f) = delete;
 	feature& operator =(const feature& f) = delete;
@@ -386,13 +386,15 @@ public:
 	}
 
 protected:
-	static float* alloc(size_t num) {
+	static float* alloc(size_t num, float initial_value = 0.0f) {
 		static size_t total = 0;
 		static size_t limit = (1 << 30) / sizeof(float); // 1G memory
 		try {
 			total += num;
 			if (total > limit) throw std::bad_alloc();
-			return new float[num]();
+			float* weights = new float[num];
+            std::fill_n(weights, num, initial_value);  // Initialize with optimistic value
+            return weights;
 		} catch (std::bad_alloc&) {
 			error << "memory limit exceeded" << std::endl;
 			std::exit(-1);
@@ -425,7 +427,7 @@ protected:
  */
 class pattern : public feature {
 public:
-	pattern(const std::vector<int>& p, int iso = 8) : feature(1 << (p.size() * 4)) {
+	pattern(const std::vector<int>& p, float initial_value = 0.0f, int iso = 8) : feature(1 << (p.size() * 4), initial_value) {
 		if (p.empty()) {
 			error << "no pattern defined" << std::endl;
 			std::exit(1);
@@ -755,6 +757,7 @@ public:
 			}
 			int sum = std::accumulate(scores.begin(), scores.end(), 0);
 			int max = *std::max_element(scores.begin(), scores.end());
+			int min = *std::min_element(scores.begin(), scores.end());
 			int stat[16] = { 0 };
 			for (int i = 0; i < 16; i++) {
 				stat[i] = std::count(maxtile.begin(), maxtile.end(), i);
@@ -764,6 +767,7 @@ public:
 			info << n;
 			info << "\t" "avg = " << avg;
 			info << "\t" "max = " << max;
+			info << "\t" "min = " << min;
 			info << std::endl;
 			for (int t = 1, c = 0; c < unit; c += stat[t++]) {
 				if (stat[t] == 0) continue;
@@ -834,61 +838,93 @@ private:
 };
 
 int main(int argc, const char* argv[]) {
-	info << "TDL2048-Demo" << std::endl;
+	info << "TDL2048" << std::endl;
 	learning tdl;
 
 	// set the learning parameters
-	size_t total = 100000;
-	float alpha = 0.1;
+	std::string file_path = "2048_8x6_4k.bin";
+	size_t alpha_decay_episodes = 10000;
+	float alpha = 0.002f;
+	float alpha_decay_rate = 0.95f;
+	float min_alpha = 0.001;
 	unsigned seed = 0;
-	info << "total = " << total << std::endl;
+	float initial_value = 0.0f;
+	info << "file_path = " << file_path << std::endl;
+	info << "alpha_decay_episodes = " << alpha_decay_episodes << std::endl;
 	info << "alpha = " << alpha << std::endl;
+	info << "alpha_decay_rate = " << alpha_decay_rate << std::endl;
+	info << "min_alpha = " << min_alpha << std::endl;
 	info << "seed = " << seed << std::endl;
+	info << "initial_value = " << initial_value << std::endl;
 	std::srand(seed);
 
 	// initialize the features of the 4x6-tuple network
-	tdl.add_feature(pattern({ 0, 1, 2, 3, 4, 5 }));
-	tdl.add_feature(pattern({ 4, 5, 6, 7, 8, 9 }));
-	tdl.add_feature(pattern({ 0, 1, 2, 4, 5, 6 }));
-	tdl.add_feature(pattern({ 4, 5, 6, 8, 9, 10 }));
+	// tdl.add_feature(pattern({ 0, 1, 2, 3, 4, 5 }));
+	// tdl.add_feature(pattern({ 4, 5, 6, 7, 8, 9 }));
+	// tdl.add_feature(pattern({ 0, 1, 2, 4, 5, 6 }));
+	// tdl.add_feature(pattern({ 4, 5, 6, 8, 9, 10 }));
+	tdl.add_feature(pattern({ 0, 1, 2, 4, 5, 6 }, initial_value));
+	tdl.add_feature(pattern({ 0, 1, 2, 3, 4, 5 }, initial_value));
+	tdl.add_feature(pattern({ 4, 5, 6, 7, 8, 9 }, initial_value));
+	tdl.add_feature(pattern({ 0, 1, 5, 6, 7, 10 }, initial_value));
+	tdl.add_feature(pattern({ 0, 1, 2, 5, 9, 10 }, initial_value));
+	tdl.add_feature(pattern({ 0, 1, 5, 9, 13, 14 }, initial_value));
+	tdl.add_feature(pattern({ 0, 1, 5, 8, 9, 13 }, initial_value));
+	tdl.add_feature(pattern({ 0, 1, 2, 4, 6, 10 }, initial_value));
 
 	// restore the model from file
-	tdl.load("2048.bin");
+	tdl.load(file_path);
 
-	// train the model
-	std::vector<move> path;
-	path.reserve(20000);
-	for (size_t n = 1; n <= total; n++) {
-		board state;
-		int score = 0;
+	int total = 1;
+	while (true)
+	{
+		// train the model
+		std::vector<move> path;
+		path.reserve(20000);
+		for (size_t n = 1; n <= alpha_decay_episodes; n++, total++) {
+			board state;
+			int score = 0;
 
-		// play an episode
-		// debug << "begin episode" << std::endl;
-		state.init();
-		while (true) {
-			// debug << "state" << std::endl << state;
-			move best = tdl.select_best_move(state);
-			path.push_back(best);
+			// play an episode
+			// debug << "begin episode" << std::endl;
+			state.init();
+			bool stop_episode = false;
+			while (!stop_episode) {
+				// debug << "state" << std::endl << state;
+				move best = tdl.select_best_move(state);
+				path.push_back(best);
 
-			if (best.is_valid()) {
-				// debug << "best " << best;
-				score += best.reward();
-				state = best.afterstate();
-				state.popup();
-			} else {
-				break;
+				if (best.is_valid()) {
+					// debug << "best " << best;
+					score += best.reward();
+					state = best.afterstate();
+					state.popup();
+				} else {
+					break;
+				}
+
+				for (int i = 0; i < 16; i++) {
+					if (state.at(i) == 14) { // 16384
+						stop_episode = true;
+						break;
+					}
+				}
 			}
+			// debug << "end episode" << std::endl;
+
+			// update by TD(0)
+			tdl.learn_from_episode(path, alpha);
+			tdl.make_statistic(total, state, score);
+			path.clear();
 		}
-		// debug << "end episode" << std::endl;
 
-		// update by TD(0)
-		tdl.learn_from_episode(path, alpha);
-		tdl.make_statistic(n, state, score);
-		path.clear();
+		// store the model into file
+		tdl.save(file_path);
+
+		// alpha decay
+		alpha = std::max(alpha * alpha_decay_rate, min_alpha);
+		info << "new alpha = " << alpha << std::endl;
 	}
-
-	// store the model into file
-	tdl.save("2048.bin");
 
 	return 0;
 }

@@ -300,8 +300,8 @@ class feature(abc.ABC):
     feature and weight table for n-tuple networks
     """
 
-    def __init__(self, length : int):
-        self.weight = feature.alloc(length)
+    def __init__(self, length : int, initial_value: int = 0):
+        self.weight = feature.alloc(length, initial_value)
 
     def __getitem__(self, i : int) -> float:
         return self.weight[i]
@@ -366,7 +366,7 @@ class feature(abc.ABC):
             exit(1)
 
     @staticmethod
-    def alloc(num : int): # -> list[float]:
+    def alloc(num : int, initial_value: int = 0): # -> list[float]:
         if not hasattr(feature.alloc, "total"):
             feature.alloc.total = 0
             feature.alloc.limit = (1 << 30) // 4 # 1G memory
@@ -374,7 +374,7 @@ class feature(abc.ABC):
             feature.alloc.total += num
             if feature.alloc.total > feature.alloc.limit:
                 raise MemoryError("memory limit exceeded")
-            return [float(0)] * num
+            return [float(initial_value)] * num
         except MemoryError as e:
             error("memory limit exceeded")
             exit(-1)
@@ -404,8 +404,8 @@ class pattern(feature):
     """
 
     # def __init__(self, patt : list[int], iso : int = 8):
-    def __init__(self, patt, iso : int = 8):
-        super().__init__(1 << (len(patt) * 4))
+    def __init__(self, patt, initial_value: int = 0, iso : int = 8):
+        super().__init__(1 << (len(patt) * 4), initial_value)
         if not patt:
             error("no pattern defined")
             exit(1)
@@ -756,54 +756,64 @@ class learning:
 
 
 if __name__ == "__main__":
-    info("TDL2048-Demo")
+    info("TDL2048")
     board.lookup.init()
     tdl = learning()
 
     # set the learning parameters
     total = 100000
     alpha = 0.1
+    alpha_decay_rate = 0.95
+    min_alpha = 0.001
     seed = 0
+    initial_value = 0
     info(f"total = {total}")
     info(f"alpha = {alpha}")
     info(f"seed = {seed}")
     random.seed(seed)
 
     # initialize the features of the 4x6-tuple network
-    tdl.add_feature(pattern([ 0, 1, 2, 3, 4, 5 ]))
-    tdl.add_feature(pattern([ 4, 5, 6, 7, 8, 9 ]))
-    tdl.add_feature(pattern([ 0, 1, 2, 4, 5, 6 ]))
-    tdl.add_feature(pattern([ 4, 5, 6, 8, 9, 10 ]))
+    tdl.add_feature(pattern([ 0, 1, 2, 4, 5, 6 ], initial_value))
+    tdl.add_feature(pattern([ 0, 1, 2, 3, 4, 5 ], initial_value))
+    tdl.add_feature(pattern([ 4, 5, 6, 7, 8, 9 ], initial_value))
+    tdl.add_feature(pattern([ 0, 1, 5, 6, 7, 10 ], initial_value))
+    tdl.add_feature(pattern([ 0, 1, 2, 5, 9, 10 ], initial_value))
+    tdl.add_feature(pattern([ 0, 1, 5, 9, 13, 14 ], initial_value))
+    tdl.add_feature(pattern([ 0, 1, 5, 8, 9, 13 ], initial_value))
+    tdl.add_feature(pattern([ 0, 1, 2, 4, 6, 10 ], initial_value))
 
     # restore the model from file
-    tdl.load("2048.bin")
+    tdl.load("2048_8x6_test.bin")
 
     # train the model
-    for n in range(1, total + 1):
-        path = []
-        state = board()
-        score = 0
+    while True:
+        for n in range(1, total + 1):
+            path = []
+            state = board()
+            score = 0
 
-        # play an episode
-        # debug("begin episode")
-        state.init()
-        while True:
-            # debug(f"state\n{state}")
-            best = tdl.select_best_move(state)
-            path.append(best)
+            # play an episode
+            # debug("begin episode")
+            state.init()
+            while True:
+                # debug(f"state\n{state}")
+                best = tdl.select_best_move(state)
+                path.append(best)
 
-            if best.is_valid():
-                # debug("best", best)
-                score += best.reward()
-                state = board(best.afterstate())
-                state.popup()
-            else:
-                break
-        # debug("end episode")
+                if best.is_valid():
+                    # debug("best", best)
+                    score += best.reward()
+                    state = board(best.afterstate())
+                    state.popup()
+                else:
+                    break
+            # debug("end episode")
 
-        # update by TD(0)
-        tdl.learn_from_episode(path, alpha)
-        tdl.make_statistic(n, state, score)
+            # update by TD(0)
+            tdl.learn_from_episode(path, alpha)
+            tdl.make_statistic(n, state, score)
 
-    # store the model into file
-    tdl.save("2048.bin")
+        # store the model into file
+        tdl.save("2048_8x6_test.bin")
+
+        alpha = max(alpha * alpha_decay_rate, min_alpha)

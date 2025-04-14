@@ -42,7 +42,7 @@ def init_model():
         tdl.add_feature(pattern([ 0, 1, 5, 8, 9, 13 ]))
         tdl.add_feature(pattern([ 0, 1, 2, 4, 6, 10 ]))
 
-        tdl.load("2048_8x6.bin")
+        tdl.load("2048_8x6_0.bin")
 
 def get_tdl_action(state):
     bitboard_state = numpy_to_bitboard(state)
@@ -288,13 +288,13 @@ class TD_MCTS:
         return max(root.children.items(), key=lambda child: child[1].total_reward / child[1].visits)
 
 root = None
-td_mcts = TD_MCTS(iterations=4, rollout_depth=0, constant=np.sqrt(2), threshold_rate=0.8)
+td_mcts = TD_MCTS(iterations=4, rollout_depth=0, constant=np.sqrt(2), threshold_rate=1)
 
 def get_action(state, score):
     init_model()
 
     legal_moves = get_legal_moves(state, score)
-    legal_moves = filter_moves_by_td_threshold(state, score, legal_moves, threshold_rate=0.8)
+    legal_moves = filter_moves_by_td_threshold(state, score, legal_moves, threshold_rate=1)
 
     # legal_moves = filter_moves_keep_max_in_corner(state, legal_moves)
     # values = []
@@ -334,29 +334,30 @@ def get_action(state, score):
     # assert(len(root.untried_actions) == 0)
     # assert(len(root.children) == len(legal_moves))
 
-    values = []
-    for a in legal_moves:
-        temp_env = Game2048Env()
-        temp_env.board = state.copy()
-        temp_env.score = score
-        temp_env.step(a, True)
-        values.append(temp_env.score + tdl_estimate(temp_env.board))
-    children = []
-    visits = []
-    for a, c in root.children.items():
-        children.append((a, c.total_reward / c.visits))
-        visits.append((a, c.visits))
-    children.sort()
-    visits.sort()
-    # values = np.array(values)
-    # for i in range(len(legal_moves)):
-    #     values[i] += children[i][1]
-    # best_act = legal_moves[np.argmax(values)]
+    if False:
+        values = []
+        for a in legal_moves:
+            temp_env = Game2048Env()
+            temp_env.board = state.copy()
+            temp_env.score = score
+            temp_env.step(a, True)
+            values.append(temp_env.score + tdl_estimate(temp_env.board))
+        children = []
+        visits = []
+        for a, c in root.children.items():
+            children.append((a, c.total_reward / c.visits))
+            visits.append((a, c.visits))
+        children.sort()
+        visits.sort()
+        # values = np.array(values)
+        # for i in range(len(legal_moves)):
+        #     values[i] += children[i][1]
+        # best_act = legal_moves[np.argmax(values)]
 
-    t = '\t' if len(root.children) < 4 else ''
-    tt = '\t' if len(root.children) < 3 else ''
-    # print(f"{best_act}, {int(s.total_reward / s.visits)}, {[int(c.visits) for c in root.children.values()]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(c.total_reward / c.visits) for c in root.children.values()]}")
-    print(f"{[int(v) for _, v in visits]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(v) for _, v in children]}\t{t}{tt}{[int(v) for v in values]}")
+        t = '\t' if len(root.children) < 4 else ''
+        tt = '\t' if len(root.children) < 3 else ''
+        # print(f"{best_act}, {int(s.total_reward / s.visits)}, {[int(c.visits) for c in root.children.values()]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(c.total_reward / c.visits) for c in root.children.values()]}")
+        print(f"{[int(v) for _, v in visits]}\t{t}{score}\t{int(root.total_reward / root.visits)}\t{[int(v) for _, v in children]}\t{t}{tt}{[int(v) for v in values]}")
 
     root = root.children[best_act]
     # assert(isinstance(root, AfterstateNode))
