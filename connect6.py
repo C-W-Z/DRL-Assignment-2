@@ -7,18 +7,18 @@ from operator import itemgetter
 
 DEBUG = True
 
-def my_excepthook(exctype, value, traceback):
-    sys.stderr.write(f"未處理的異常: {value}\n")
-    sys.__excepthook__(exctype, value, traceback)  # 保留原始異常處理
+# def my_excepthook(exctype, value, traceback):
+#     sys.stderr.write(f"未處理的異常: {value}\n")
+#     sys.__excepthook__(exctype, value, traceback)  # 保留原始異常處理
 
-sys.excepthook = my_excepthook
+# sys.excepthook = my_excepthook
 
 @njit
-def check_move_win(board: np.ndarray, size: int, color: int, can_move: int):
+def check_move_win(board: np.ndarray, size: int, color: int, remain_turns: int):
     directions = np.array([[0, 1], [1, 0], [1, 1], [1, -1]], dtype=np.int32)
 
     # 初始化結果陣列，預設為無效位置 (-1, -1)
-    result = np.full((can_move, 2), -1, dtype=np.int32)
+    result = np.full((remain_turns, 2), -1, dtype=np.int32)
 
     for i in range(size):
         for j in range(size):
@@ -27,22 +27,22 @@ def check_move_win(board: np.ndarray, size: int, color: int, can_move: int):
                 if can_fit_window(i, j, di, dj, size):
                     count = 0
                     empty_count = 0
-                    # 臨時儲存空格位置，最多儲存 can_move 個
-                    temp_empty = np.zeros((can_move, 2), dtype=np.int32)
+                    # 臨時儲存空格位置，最多儲存 remain_turns 個
+                    temp_empty = np.zeros((remain_turns, 2), dtype=np.int32)
 
                     for k in range(6):
                         r, c = i + k * di, j + k * dj
                         w = board[r, c]
                         if w == color:
                             count += 1
-                        elif w == 0 and empty_count < can_move:
+                        elif w == 0 and empty_count < remain_turns:
                             temp_empty[empty_count, 0] = r
                             temp_empty[empty_count, 1] = c
                             empty_count += 1
 
                     # 如果已有棋子數量加上可下棋子數量正好為6
-                    if count == 6 - can_move and empty_count == can_move:
-                        for m in range(can_move):
+                    if count == 6 - remain_turns and empty_count == remain_turns:
+                        for m in range(remain_turns):
                             result[m, 0] = temp_empty[m, 0]
                             result[m, 1] = temp_empty[m, 1]
                         return result
@@ -50,7 +50,7 @@ def check_move_win(board: np.ndarray, size: int, color: int, can_move: int):
     return result
 
 @njit
-def evaluate_board(board: np.ndarray, size: int, color: int) -> tuple:
+def evaluate_board(board: np.ndarray, size: int, color: int, remain_turns: int) -> tuple:
     """
     評估6子棋盤面，1為黑子，2為白子，0為空格
     board: 二維NumPy陣列表示棋盤
@@ -88,9 +88,9 @@ def evaluate_board(board: np.ndarray, size: int, color: int) -> tuple:
             for direction in directions:
                 di, dj = direction[0], direction[1]
                 if can_fit_window(i, j, di, dj, size):
-                    window = get_window(board, i, j, di, dj, size)
-                    my_score += analyze_pattern(window, color, score_array)
-                    oppo_score += analyze_pattern(window, opponent, score_array)
+                    window = get_window(board, i, j, di, dj)
+                    my_score += analyze_pattern(window, color, score_array, remain_turns)
+                    oppo_score += analyze_pattern(window, opponent, score_array, 2)
 
     return my_score, oppo_score
 
@@ -101,7 +101,7 @@ def can_fit_window(i: int, j: int, di: int, dj: int, size: int, length: int = 6)
     return 0 <= ni < size and 0 <= nj < size
 
 @njit
-def get_window(board: np.ndarray, i: int, j: int, di: int, dj: int, size: int) -> np.ndarray:
+def get_window(board: np.ndarray, i: int, j: int, di: int, dj: int) -> np.ndarray:
     """獲取指定方向的6格窗口"""
     window = np.zeros(6, dtype=np.int8)
     for k in range(6):
@@ -109,7 +109,7 @@ def get_window(board: np.ndarray, i: int, j: int, di: int, dj: int, size: int) -
     return window
 
 @njit
-def analyze_pattern(window: np.ndarray, player: int, score_array: np.ndarray) -> int:
+def analyze_pattern(window: np.ndarray, player: int, score_array: np.ndarray, remain_turns: int) -> int:
     """
     分析6格窗口的模式，包括連子、開放端和潛在威脅
     """
@@ -152,6 +152,8 @@ def analyze_pattern(window: np.ndarray, player: int, score_array: np.ndarray) ->
         if max_consecutive > 1:
             score += open_ends * max_consecutive
 
+        if remain_turns == 2:
+            player_count = min(player_count + 1, 6)
         score += score_array[player_count]
         # if player_count == 2 and empty_count == 4 and max_consecutive == 1:
         #     score += score_array[2]
@@ -165,7 +167,7 @@ def analyze_pattern(window: np.ndarray, player: int, score_array: np.ndarray) ->
     return score
 
 @njit
-def _evaluate_position(board, size, r, c, color):
+def _evaluate_position(board, size, r, c, color: int, remain_turns: int):
     directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
     score = 5
     if r == 0 or r == size - 1 or c == 0 or c == size - 1:
@@ -228,6 +230,9 @@ def _evaluate_position(board, size, r, c, color):
 
         if not can_reach_six:
             continue
+
+        if total_space > 0 and remain_turns == 2:
+            count += 1
 
         s = 0
         if count >= 6:
@@ -299,78 +304,6 @@ def _check_win(board, size):
                     if count >= 6:
                         return current_color
     return 0
-
-@njit
-def minimax(board: np.ndarray, size: int, depth: int, alpha: float, beta: float,
-            maximizingPlayer: bool, maximizingColor: int, only_one_move: bool) -> tuple:
-    """
-    Minimax演算法，帶Alpha-Beta剪枝，用於6子棋
-    board: 二維NumPy陣列表示棋盤
-    size: 棋盤大小
-    depth: 搜尋深度
-    alpha, beta: Alpha-Beta剪枝參數
-    maximizingPlayer: 是否為最大化玩家
-    maximizingColor: 最大化玩家的棋子 (1 或 2)
-    返回: (action, value)，action是(row, col)或(-1, -1)表示無動作
-    """
-    # 獲取有效位置
-    valid_locations = _nearby_availables(size, board, 1)
-    n_valid = len(valid_locations)
-
-    # 檢查終止條件
-    winner = _check_win(board, size)
-    is_terminal = winner != 0 or n_valid == 0
-
-    if depth == 0 or is_terminal:
-        if is_terminal:
-            if winner == maximizingColor:
-                return (-1, -1), 100000000
-            elif winner == 3 - maximizingColor:
-                return (-1, -1), -100000000
-            else:  # 平局
-                return (-1, -1), 0
-        else:  # 深度為0
-            my_score, oppo_score = evaluate_board(board, size, maximizingColor)
-            return (-1, -1), my_score - oppo_score
-
-    if maximizingPlayer:
-        value = -np.inf
-        action = (-1, -1)  # 預設動作
-        if n_valid > 0:
-            # 隨機選擇初始動作（避免random.choice）
-            action = valid_locations[0]
-
-        for i in range(n_valid):
-            row, col = valid_locations[i]
-            b_copy = board.copy()
-            b_copy[row, col] = maximizingColor
-            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, not only_one_move, maximizingColor, not only_one_move)
-            if new_score > value:
-                value = new_score
-                action = (row, col)
-            alpha = max(alpha, value)
-            if alpha >= beta:
-                break
-        return action, value
-
-    else:  # Minimizing player
-        value = np.inf
-        action = (-1, -1)  # 預設動作
-        if n_valid > 0:
-            action = valid_locations[0]
-
-        for i in range(n_valid):
-            row, col = valid_locations[i]
-            b_copy = board.copy()
-            b_copy[row, col] = 3 - maximizingColor
-            _, new_score = minimax(b_copy, size, depth - 1, alpha, beta, only_one_move, maximizingColor, not only_one_move)
-            if new_score < value:
-                value = new_score
-                action = (row, col)
-            beta = min(beta, value)
-            if alpha >= beta:
-                break
-        return action, value
 
 class Board:
     def __init__(self, size=19):
@@ -448,9 +381,9 @@ class Board:
         else:
             return ord(col_char) - ord('A')
 
-    def evaluate_position(self, r, c, color):
+    def evaluate_position(self, r, c, color, remain_turns):
         """Evaluates the strength of a position based on alignment potential."""
-        return _evaluate_position(self.board, self.size, r, c, color)
+        return _evaluate_position(self.board, self.size, r, c, color, remain_turns)
 
 # def policy_value_func(game: Board, max_distance=2):
 #     # 獲取所有空位
@@ -480,9 +413,11 @@ def rollout_policy_func(game: Board, threshold_rate = 0, max_dist=2):
         if not nearby_availables:
             return [], np.array([])
 
+    remain_turns = 2 - game.turn_moves if game.move_count != 0 else 1
+
     scores = []
     for r, c in nearby_availables:
-        score = game.evaluate_position(r, c, game.turn) + game.evaluate_position(r, c, 3 - game.turn)
+        score = game.evaluate_position(r, c, game.turn, remain_turns) + game.evaluate_position(r, c, 3 - game.turn, 2)
         scores.append(score)
 
     # 將分數轉換為概率（簡單正規化）
@@ -544,11 +479,12 @@ def get_rule_base_action(game: Board, nearby_availables):
         game.board[r, c] = 0
 
     # print("evaluate_position", file=sys.stderr)
+    remain_turns = 2 - game.turn_moves if game.move_count != 0 else 1
     # scores = []
     best_move = None
     best_score = -1
     for r, c in nearby_availables:
-        score = game.evaluate_position(r, c, my_color)
+        score = game.evaluate_position(r, c, my_color, remain_turns)
         # scores.append(score)
         if score > best_score:
             best_score = score
@@ -556,7 +492,7 @@ def get_rule_base_action(game: Board, nearby_availables):
 
     # print("evaluate_position 2", file=sys.stderr)
     for r, c in nearby_availables:
-        score = game.evaluate_position(r, c, opponent_color)
+        score = game.evaluate_position(r, c, opponent_color, 2)
         # scores.append(score)
         if score >= best_score:
             best_score = score
@@ -604,7 +540,7 @@ class MCTSNode:
         return self.parent is None
 
 class MCTS:
-    def __init__(self, c_puct=5, n_playout=1500):
+    def __init__(self, c_puct=5, n_playout=2000):
         self.root = MCTSNode(None, 1.0)
         self.c_puct = c_puct
         self.n_playout = n_playout
@@ -652,15 +588,10 @@ class MCTS:
 
         # print("backpropagation", file=sys.stderr)
 
-    def rollout(self, state: Board, limit=10):
+    def rollout(self, state: Board, limit=5):
 
         player = state.turn
-        # _, value = minimax(state.board, state.size, 4, -np.inf, np.inf, True, player, state.turn_moves == 1 or state.move_count == 0)
-        # if value > 0:
-        #     return 1
-        # elif value < 0:
-        #     return -1
-        # return 0
+
         end, winner = state.game_end()
         if end:
             if winner == 0:  # Tie
@@ -698,7 +629,8 @@ class MCTS:
         else:
         #     print("WARNING: rollout reached move limit", file=sys.stderr)
             # print("evaluate_board", file=sys.stderr)
-            my_score, oppo_score = evaluate_board(state.board, state.size, player)
+            remain_turns = 2 - state.turn_moves if state.move_count != 0 else 1
+            my_score, oppo_score = evaluate_board(state.board, state.size, player, remain_turns)
             # print("evaluate_board end", file=sys.stderr)
             # if my_score > oppo_score:
             #     return 1
@@ -709,8 +641,8 @@ class MCTS:
             score = 0
             empty_positions = state.nearby_availables()
             for r, c in empty_positions:
-                score += state.evaluate_position(r, c, player)
-                score -= state.evaluate_position(r, c, 3 - player)
+                score += state.evaluate_position(r, c, player, remain_turns)
+                score -= state.evaluate_position(r, c, 3 - player, 2)
             if score > 0 and my_score > oppo_score:
                 return 1
             elif score < 0 and my_score < oppo_score:
@@ -867,8 +799,9 @@ class Connect6Game:
                 self.turn_moves = 0
 
         if DEBUG:
+            remain_turns = 2 - self.turn_moves if self.move_count != 0 else 1
             # print("evaluate_board", file=sys.stderr)
-            black_score, white_score = evaluate_board(self.board, self.size, 1)
+            black_score, white_score = evaluate_board(self.board, self.size, 1, remain_turns)
             print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
 
             black_score = 0
@@ -876,8 +809,8 @@ class Connect6Game:
             empty_positions = self.nearby_availables()
             # print(empty_positions, file=sys.stderr)
             for r, c in empty_positions:
-                black_score += self.evaluate_position(r, c, 1)
-                white_score += self.evaluate_position(r, c, 2)
+                black_score += self.evaluate_position(r, c, 1, remain_turns)
+                white_score += self.evaluate_position(r, c, 2, 2)
             print(f"B: {black_score}, W: {white_score}", file=sys.stderr)
             print("------", file=sys.stderr)
 
@@ -936,15 +869,6 @@ class Connect6Game:
                 return
             self.board[r, c] = 0
 
-        # print("Minimax", file=sys.stderr)
-        # action, value = minimax(self.board, self.size, 2, -np.inf, np.inf, True, my_color, self.turn_moves == 1 or self.move_count == 0)
-        # print(f"Minimax: {action}, {value}", file=sys.stderr)
-        # r, c = action
-        # move_str = f"{self.index_to_label(c)}{r+1}"
-        # print(f"move={move_str}, size={self.size}, {self.game_over}", file=sys.stderr)
-        # self.play_move(color, move_str)
-        # print(move_str, flush=True)
-        # return
 
         # expected_moves = 1 if self.move_count == 0 and color.upper() == 'B' else 2
         # if self.turn_moves >= expected_moves:
@@ -995,9 +919,9 @@ class Connect6Game:
             self.play_move(color, move_str)
             print(move_str, flush=True)
 
-    def evaluate_position(self, r, c, color):
+    def evaluate_position(self, r, c, color, remain_turns):
         """Evaluates the strength of a position based on alignment potential."""
-        return _evaluate_position(self.board, self.size, r, c, color)
+        return _evaluate_position(self.board, self.size, r, c, color, remain_turns)
 
     def show_board(self):
         """Displays the board in text format."""
